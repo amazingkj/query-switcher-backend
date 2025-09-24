@@ -22,10 +22,10 @@ class ConversionTestService @Autowired constructor(
         
         testCases.forEach { testCase ->
             try {
-                val result = sqlConverterEngine.convertSql(
+                val result = sqlConverterEngine.convert(
                     sql = testCase.sql,
-                    sourceDialect = testCase.sourceDialect,
-                    targetDialect = testCase.targetDialect
+                    sourceDialectType = testCase.sourceDialect,
+                    targetDialectType = testCase.targetDialect
                 )
                 
                 val testResult = TestCaseResult(
@@ -58,7 +58,7 @@ class ConversionTestService @Autowired constructor(
     /**
      * 테스트 결과 평가
      */
-    private fun evaluateTestResult(testCase: ConversionTestCase, result: SqlConversionResult): Boolean {
+    private fun evaluateTestResult(testCase: ConversionTestCase, result: ConversionResult): Boolean {
         return when (testCase.expectedResult) {
             is ExpectedResult.ExactMatch -> {
                 result.convertedSql.equals(testCase.expectedResult.expectedSql, ignoreCase = true)
@@ -387,7 +387,7 @@ sealed class ExpectedResult {
  */
 data class TestCaseResult(
     val testCase: ConversionTestCase,
-    val result: SqlConversionResult?,
+    val result: ConversionResult?,
     val passed: Boolean,
     val error: String?
 )

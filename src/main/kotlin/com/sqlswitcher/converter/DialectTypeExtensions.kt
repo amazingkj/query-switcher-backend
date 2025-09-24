@@ -1,6 +1,16 @@
 package com.sqlswitcher.converter
 
 /**
+ * 호환성 레벨
+ */
+enum class CompatibilityLevel {
+    PERFECT,    // 완벽한 호환성
+    HIGH,       // 높은 호환성
+    MEDIUM,     // 중간 호환성
+    LOW         // 낮은 호환성
+}
+
+/**
  * DialectType에 대한 확장 함수들
  */
 

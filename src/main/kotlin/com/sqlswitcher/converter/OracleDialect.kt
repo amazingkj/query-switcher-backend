@@ -8,7 +8,7 @@ import net.sf.jsqlparser.statement.select.Limit
 import net.sf.jsqlparser.statement.select.Offset
 import net.sf.jsqlparser.statement.select.Top
 import net.sf.jsqlparser.statement.select.Fetch
-// import net.sf.jsqlparser.statement.select.SelectExpressionItem // Using full path instead
+import net.sf.jsqlparser.statement.select.SelectItem
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -152,13 +152,13 @@ class OracleDialect : AbstractDatabaseDialect() {
     ) {
         // SELECT 절의 함수들 변환
         selectBody.selectItems?.forEach { selectItem ->
-            if (selectItem is net.sf.jsqlparser.statement.select.SelectExpressionItem) {
-                convertExpression(selectItem.expression, targetDialect, warnings, appliedRules)
+            selectItem.expression?.let { expression ->
+                convertExpression(expression, targetDialect, warnings, appliedRules)
             }
         }
         
         // WHERE 절의 함수들 변환
-        selectBody.where?.expression?.let { expression ->
+        selectBody.where?.let { expression ->
             convertExpression(expression, targetDialect, warnings, appliedRules)
         }
     }
@@ -173,7 +173,7 @@ class OracleDialect : AbstractDatabaseDialect() {
         appliedRules: MutableList<String>
     ) {
         when (expression) {
-            is Function -> {
+            is SqlFunction -> {
                 convertFunction(expression, targetDialect, warnings, appliedRules)
             }
             is net.sf.jsqlparser.expression.BinaryExpression -> {
@@ -188,7 +188,7 @@ class OracleDialect : AbstractDatabaseDialect() {
      * 개별 함수 변환
      */
     private fun convertFunction(
-        function: Function,
+        function: SqlFunction,
         targetDialect: DialectType,
         warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>

@@ -1,7 +1,7 @@
 package com.sqlswitcher.service
 
 import com.github.benmanes.caffeine.cache.Cache
-import com.sqlswitcher.parser.AstAnalysisResult
+import com.sqlswitcher.parser.model.AstAnalysisResult
 import com.sqlswitcher.parser.ParseResult
 import org.springframework.stereotype.Service
 import java.security.MessageDigest

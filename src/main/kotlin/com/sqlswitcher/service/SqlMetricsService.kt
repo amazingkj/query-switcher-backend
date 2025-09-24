@@ -1,6 +1,6 @@
 package com.sqlswitcher.service
 
-import com.sqlswitcher.parser.ConversionDifficulty
+import com.sqlswitcher.parser.model.ConversionDifficulty
 import com.sqlswitcher.parser.StatementType
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry

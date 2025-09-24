@@ -30,7 +30,7 @@ class CacheConfig {
     }
     
     @Bean
-    fun sqlAnalysisCache(): com.github.benmanes.caffeine.cache.Cache<String, com.sqlswitcher.parser.AstAnalysisResult> {
+    fun sqlAnalysisCache(): com.github.benmanes.caffeine.cache.Cache<String, com.sqlswitcher.parser.model.AstAnalysisResult> {
         return Caffeine.newBuilder()
             .maximumSize(500)
             .expireAfterWrite(Duration.ofMinutes(30))

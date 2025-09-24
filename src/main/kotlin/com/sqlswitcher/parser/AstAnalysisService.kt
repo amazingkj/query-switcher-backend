@@ -75,16 +75,3 @@ class AstAnalysisService(
         return warnings
     }
 }
-
-data class AstAnalysisResult(
-    val tableColumnInfo: TableColumnInfo,
-    val functionExpressionInfo: FunctionExpressionInfo,
-    val complexityDetails: ComplexityDetails
-)
-
-enum class ConversionDifficulty {
-    EASY,        // Simple SELECT, basic WHERE
-    MODERATE,    // JOINs, basic functions
-    HARD,        // Subqueries, aggregates, CASE
-    VERY_HARD    // Window functions, CTEs, recursive queries
-}

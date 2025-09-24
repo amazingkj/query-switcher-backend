@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 18080
   servlet:
     context-path: /
 
@@ -50,12 +50,15 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+      base-path: /actuator
   endpoint:
     health:
       show-details: always
   info:
     env:
       enabled: true
+  security:
+    enabled: false
 
 # Application Info
 info:
@@ -63,3 +66,15 @@ info:
     name: SQL Query Switcher
     description: Online SQL dialect converter for MySQL, PostgreSQL, Oracle, and Tibero
     version: 0.0.1-SNAPSHOT
+
+# OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+    display-request-duration: true
+    display-operation-id: true
+  show-actuator: true
