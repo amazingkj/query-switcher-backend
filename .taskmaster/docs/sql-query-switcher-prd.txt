@@ -1,0 +1,152 @@
+# SQL Query Switcher - Product Requirements Document
+
+## Overview
+SQL Query Switcher는 MySQL, PostgreSQL, Oracle, Tibero 등 다양한 데이터베이스 간 SQL 문법 변환을 제공하는 웹 기반 온라인 도구입니다. 개발자와 DBA들이 DB 전환 시 SQL 호환성 문제를 해결하고, 검색 유입을 통한 지속적인 트래픽 확보로 광고 수익화를 목표로 합니다.
+
+## Core Features
+
+### 1. SQL 변환 엔진
+- **SELECT/WHERE/JOIN/GROUP/ORDER 구문 변환**: 기본적인 DML 구문들을 타겟 DB 방언으로 변환
+- **LIMIT/OFFSET ↔ FETCH FIRST/ROWNUM 변환**: 페이징 구문의 DB별 차이점 해결
+- **날짜/문자 함수 매핑**: CURRENT_DATE, TRUNC 등 주요 함수들의 DB별 문법 변환
+- **UPSERT/MERGE 구문 처리**: 복잡한 구문은 경고 패널로 안내
+
+### 2. 사용자 인터페이스
+- **Monaco Editor 기반**: 좌측 입력창, 우측 결과창으로 구성
+- **실시간 변환**: 입력과 동시에 변환 결과 표시
+- **복사 기능**: 변환 결과 원클릭 복사
+- **경고 시스템**: 지원 불가 구문에 대한 명확한 안내
+
+### 3. 분석 및 최적화
+- **변환 로그 수집**: 자주 사용되는 구문 패턴 분석
+- **SEO 최적화**: "mysql limit oracle", "oracle rownum postgres" 등 검색 키워드 대응
+- **성능 모니터링**: 변환 속도 및 정확도 추적
+
+## User Experience
+
+### Target Users
+- **개발자/DBA**: 프로젝트 중 DB 전환 시 SQL 호환성 맞추는 전문가
+- **학생/학습자**: DB 과목 공부 중 문법 차이 확인이 필요한 학습자
+- **SI/기업**: Oracle → PostgreSQL 마이그레이션 등 대규모 DB 전환 프로젝트
+
+### User Journey
+1. 웹사이트 접속 → SQL 입력 → 타겟 DB 선택 → 변환 결과 확인 → 복사하여 사용
+2. SEO 가이드 페이지를 통한 유입 → 실제 변환 도구 사용 → 재방문 유도
+
+## Technical Architecture
+
+### Frontend Stack
+- **React + Vite**: 빠른 개발 환경과 번들링
+- **Monaco Editor**: VS Code와 동일한 코드 에디터 경험
+- **TailwindCSS**: 반응형 UI 디자인
+- **TypeScript**: 타입 안정성 확보
+
+### Backend Stack
+- **Kotlin + Spring Boot**: JVM 기반 고성능 백엔드
+- **JSQLParser**: SQL AST 파싱 및 변환 엔진
+- **RESTful API**: JSON 기반 API 설계
+- **Spring Security**: API 보안 및 레이트 리미팅
+
+### Infrastructure
+- **Nginx**: 리버스 프록시 및 정적 파일 서빙
+- **Cloudflare**: HTTPS, CDN, 캐싱 최적화
+- **Docker**: 컨테이너 기반 배포
+- **CI/CD**: GitHub Actions를 통한 자동 배포
+
+### Analytics & Monetization
+- **Google Analytics**: 사용자 행동 분석
+- **Google AdSense**: 광고 수익화
+- **Custom Analytics**: 변환 로그 및 성능 지표 수집
+
+## Development Roadmap
+
+### Phase 1: MVP (2주)
+- **Week 1**: 백엔드 API 개발 (파싱/변환 엔진) + 프론트엔드 기본 UI
+- **Week 2**: 광고/GA 삽입, SEO 가이드 페이지, HTTPS 배포
+
+### Phase 2: Enhancement (4주)
+- 고급 SQL 구문 지원 확장
+- 사용자 피드백 기반 UI/UX 개선
+- 성능 최적화 및 캐싱 전략
+
+### Phase 3: Monetization (6주)
+- Freemium 모델 도입 (대량 파일 업로드, API 제공)
+- B2B 기능 개발 (기업용 SaaS)
+- 고급 분석 대시보드
+
+## Logical Dependency Chain
+
+### Foundation (우선순위 1)
+1. **JSQLParser 통합**: Kotlin/Spring Boot에서 SQL 파싱 기능 구현
+2. **기본 변환 엔진**: SELECT, WHERE, JOIN 등 핵심 구문 변환 로직
+3. **REST API 설계**: 변환 요청/응답 API 엔드포인트
+
+### Core Features (우선순위 2)
+4. **React 프론트엔드**: Monaco Editor 기반 UI 구현
+5. **실시간 변환**: 프론트-백엔드 연동 및 실시간 결과 표시
+6. **복사 기능**: 클립보드 API 연동
+
+### User Experience (우선순위 3)
+7. **경고 시스템**: 지원 불가 구문에 대한 사용자 안내
+8. **반응형 디자인**: 모바일/태블릿 대응
+9. **로딩 상태**: 변환 중 사용자 피드백
+
+### Analytics & SEO (우선순위 4)
+10. **GA 연동**: 사용자 행동 추적
+11. **SEO 가이드 페이지**: 검색 유입 최적화
+12. **변환 로그 수집**: 사용 패턴 분석
+
+### Monetization (우선순위 5)
+13. **AdSense 연동**: 광고 수익화
+14. **성능 모니터링**: 서비스 안정성 확보
+15. **배포 및 인프라**: 프로덕션 환경 구축
+
+## Risks and Mitigations
+
+### Technical Challenges
+- **SQL 파싱 복잡성**: JSQLParser의 한계로 인한 복잡한 구문 처리 어려움
+  - *Mitigation*: 단계적 지원 범위 확장, 사용자 피드백 기반 우선순위 결정
+- **성능 이슈**: 대용량 SQL 파일 처리 시 응답 시간 지연
+  - *Mitigation*: 비동기 처리, 캐싱 전략, 타임아웃 설정
+
+### Business Risks
+- **경쟁사 대응**: AWS SCT, ora2pg 등 기존 솔루션의 웹 버전 출시
+  - *Mitigation*: Tibero 지원 등 국내 특화 기능으로 차별화
+- **수익화 지연**: 초기 트래픽 부족으로 광고 수익 미달
+  - *Mitigation*: SEO 최적화, 소셜 미디어 마케팅, 개발자 커뮤니티 홍보
+
+### Resource Constraints
+- **개발 리소스**: 2주 MVP 개발 일정의 타이트함
+  - *Mitigation*: 핵심 기능 우선 개발, 점진적 기능 확장
+- **운영 비용**: 서버 및 CDN 비용 증가
+  - *Mitigation*: Cloudflare 무료 플랜 활용, 효율적인 캐싱 전략
+
+## Success Metrics
+
+### Technical KPIs
+- 변환 정확도: 95% 이상
+- 응답 시간: 평균 2초 이내
+- 가용성: 99.9% 이상
+
+### Business KPIs
+- 일일 활성 사용자: 1,000명 이상
+- 페이지뷰: 일일 5,000 PV 이상
+- 광고 수익: 월 100만원 이상 (6개월 후)
+
+## Appendix
+
+### Supported Database Dialects
+- MySQL 8.0+
+- PostgreSQL 13+
+- Oracle 19c+
+- Tibero 7 (국내 특화)
+
+### Key SQL Constructs Priority
+1. SELECT, FROM, WHERE (기본 조회)
+2. JOIN (INNER, LEFT, RIGHT, OUTER)
+3. GROUP BY, HAVING, ORDER BY
+4. LIMIT/OFFSET, FETCH FIRST, ROWNUM
+5. INSERT, UPDATE, DELETE
+6. 날짜/시간 함수 (CURRENT_DATE, TRUNC, DATE_FORMAT 등)
+7. 문자열 함수 (CONCAT, SUBSTRING, REPLACE 등)
+8. 수학 함수 (ROUND, CEIL, FLOOR 등)
