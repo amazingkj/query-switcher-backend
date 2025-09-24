@@ -27,6 +27,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.springframework.boot:spring-boot-starter-cache")
     
     // Kotlin
     implementation("org.jetbrains.kotlin:kotlin-reflect")
@@ -35,6 +36,13 @@ dependencies {
     
     // SQL Parser
     implementation("com.github.jsqlparser:jsqlparser:4.9")
+    
+    // Caching
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+    
+    // Metrics
+    implementation("io.micrometer:micrometer-core")
+    implementation("io.micrometer:micrometer-registry-prometheus")
     
     // Database
     implementation("com.h2database:h2")
