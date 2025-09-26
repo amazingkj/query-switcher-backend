@@ -32,21 +32,22 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const handleEditorDidMount = (editor: editor.IStandaloneCodeEditor) => {
     editorRef.current = editor;
-    
+
     // SQL 언어 설정
     editor.getModel()?.setLanguage('sql');
-    
+
     // 포커스 설정
     if (!readOnly) {
       editor.focus();
     }
 
-    // 키보드 단축키 설정
+    // 키보드 단축키 설정 - Format
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
       handleFormat();
     });
 
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+    // 키보드 단축키 설정 - Validate (Alt+V로 변경, Ctrl+V는 붙여넣기용)
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyV, () => {
       handleValidate();
     });
   };
@@ -110,7 +111,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             <button
               onClick={handleValidate}
               className="px-3 py-1 text-sm bg-green-600 text-white hover:bg-green-700 focus:outline-none transition-all duration-200"
-              title="검증 (Ctrl+V)"
+              title="검증 (Alt+V)"
             >
               검증
             </button>
@@ -155,8 +156,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             minimap: { enabled: false },
             wordWrap: 'on',
             lineNumbers: 'on',
-            fontSize: 14,
-            fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+            fontSize: 12,
+            fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", "Courier New", monospace',
             theme: 'vs-light',
             automaticLayout: true,
             scrollBeyondLastLine: false,
@@ -170,6 +171,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             overviewRulerLanes: 0,
             hideCursorInOverviewRuler: true,
             overviewRulerBorder: false,
+            copyWithSyntaxHighlighting: true,
+            emptySelectionClipboard: true,
+            formatOnPaste: false,
+            dragAndDrop: true,
+            accessibilitySupport: 'on',
             suggest: {
               showKeywords: true,
               showSnippets: true,

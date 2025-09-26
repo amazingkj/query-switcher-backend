@@ -1,14 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100;300;400;500;600;700;900&family=Noto+Sans:wght@100;300;400;500;600;700;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   html {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
   }
-  
+
   body {
     @apply bg-gray-50 text-gray-900;
+    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
+  }
+
+  * {
+    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
   }
 }
 

@@ -7,7 +7,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        'mono': ['Monaco', 'Menlo', 'Ubuntu Mono', 'monospace'],
+        'sans': ['Noto Sans', 'Noto Sans KR', 'system-ui', 'sans-serif'],
+        'mono': ['Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', 'monospace'],
       },
       colors: {
         primary: {
