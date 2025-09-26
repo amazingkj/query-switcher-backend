@@ -19,46 +19,85 @@ class SqlConversionService(
 
     fun convertSql(request: ConversionRequest): ConversionResponse {
         val startTime = Instant.now()
-        
+
         // Record conversion request
         sqlMetricsService.recordConversionRequest(
             request.sourceDialect.name,
             request.targetDialect.name
         )
-        
+
         return try {
-            // Convert the SQL using the conversion engine
-            val conversionOptions = request.options ?: ConversionOptions()
-            val conversionResult = sqlConverterEngine.convert(
-                sql = request.sql,
-                sourceDialectType = request.sourceDialect,
-                targetDialectType = request.targetDialect,
-                options = conversionOptions as ConversionOptions
-            )
-            
+            // Split SQL by semicolon to handle multiple statements
+            val sqlStatements = request.sql.split(";")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+
+            // Map model options to converter options
+            val conversionOptions = request.options?.let {
+                ConversionOptions(
+                    preserveComments = it.enableComments,
+                    formatOutput = it.formatSql,
+                    includeWarnings = true,
+                    strictMode = it.strictMode,
+                    customMappings = emptyMap(),
+                    skipUnsupportedFeatures = !it.replaceUnsupportedFunctions,
+                    maxComplexityScore = 100
+                )
+            } ?: ConversionOptions()
+
+            // Convert each statement separately
+            val convertedStatements = mutableListOf<String>()
+            val allWarnings = mutableListOf<ConversionWarning>()
+            val allAppliedRules = mutableListOf<String>()
+
+            for (sqlStatement in sqlStatements) {
+                try {
+                    val conversionResult = sqlConverterEngine.convert(
+                        sql = sqlStatement,
+                        sourceDialectType = request.sourceDialect,
+                        targetDialectType = request.targetDialect,
+                        options = conversionOptions
+                    )
+                    convertedStatements.add(conversionResult.convertedSql)
+                    allWarnings.addAll(conversionResult.warnings)
+                    allAppliedRules.addAll(conversionResult.appliedRules)
+                } catch (e: Exception) {
+                    // If one statement fails, add the original and a warning
+                    convertedStatements.add(sqlStatement)
+                    allWarnings.add(ConversionWarning(
+                        type = WarningType.UNSUPPORTED_STATEMENT,
+                        message = "Failed to convert statement: ${e.message}",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "Please review this statement manually"
+                    ))
+                }
+            }
+
+            // Join converted statements back together
+            val convertedSql = convertedStatements.joinToString(";\n") + if (convertedStatements.isNotEmpty()) ";" else ""
             val endTime = Instant.now()
             val totalTime = Duration.between(startTime, endTime).toMillis()
-            
+
             // Record successful conversion
             sqlMetricsService.recordConversionSuccess(
                 request.sourceDialect.name,
                 request.targetDialect.name
             )
-            
+
             // Record conversion duration
             sqlMetricsService.recordConversionDuration(
                 totalTime,
                 request.sourceDialect.name,
                 request.targetDialect.name
             )
-            
+
             ConversionResponse(
                 originalSql = request.sql,
-                convertedSql = conversionResult.convertedSql,
+                convertedSql = convertedSql,
                 sourceDialect = request.sourceDialect,
                 targetDialect = request.targetDialect,
-                warnings = conversionResult.warnings,
-                appliedRules = conversionResult.appliedRules,
+                warnings = allWarnings,
+                appliedRules = allAppliedRules.distinct(),
                 conversionTime = totalTime,
                 success = true
             )

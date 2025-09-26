@@ -43,9 +43,19 @@ class SqlParserService(
     
     private fun parseSqlInternal(sql: String): ParseResult {
         val startTime = Instant.now()
-        
+
         return try {
-            val statement = CCJSqlParserUtil.parse(sql)
+            // Try to parse as multiple statements first
+            val statements = try {
+                CCJSqlParserUtil.parseStatements(sql)?.statements ?: listOf(CCJSqlParserUtil.parse(sql))
+            } catch (e: Exception) {
+                // If multi-statement parsing fails, try single statement
+                listOf(CCJSqlParserUtil.parse(sql))
+            }
+
+            // Use the first statement for now (can be extended to handle multiple)
+            val statement = statements.firstOrNull() ?: throw JSQLParserException("No valid SQL statement found")
+
             val endTime = Instant.now()
             val parseTime = Duration.between(startTime, endTime).toMillis()
             

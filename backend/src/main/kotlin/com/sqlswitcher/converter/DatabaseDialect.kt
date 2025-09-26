@@ -74,15 +74,7 @@ data class ConversionResult(
     val warnings: List<ConversionWarning> = emptyList(),
     val executionTime: Long = 0,
     val appliedRules: List<String> = emptyList(),
-    val metadata: ConversionMetadata = ConversionMetadata(
-        sourceDialect = TODO(),
-        targetDialect = TODO(),
-        complexityScore = TODO(),
-        functionCount = TODO(),
-        tableCount = TODO(),
-        joinCount = TODO(),
-        subqueryCount = TODO()
-    )
+    val metadata: ConversionMetadata? = null
 )
 
 /**
