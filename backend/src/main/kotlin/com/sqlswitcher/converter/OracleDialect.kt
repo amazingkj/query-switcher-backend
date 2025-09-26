@@ -9,6 +9,8 @@ import net.sf.jsqlparser.statement.select.Offset
 import net.sf.jsqlparser.statement.select.Top
 import net.sf.jsqlparser.statement.select.Fetch
 import net.sf.jsqlparser.statement.select.SelectItem
+import net.sf.jsqlparser.statement.create.table.CreateTable
+import net.sf.jsqlparser.statement.drop.Drop
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -54,10 +56,26 @@ class OracleDialect : AbstractDatabaseDialect() {
     ): ConversionResult {
         val warnings = mutableListOf<ConversionWarning>()
         val appliedRules = mutableListOf<String>()
-        
+
         when (statement) {
             is Select -> {
                 val convertedSql = convertSelectStatement(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is CreateTable -> {
+                val convertedSql = convertCreateTable(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is Drop -> {
+                val convertedSql = convertDropStatement(statement, targetDialect, warnings, appliedRules)
                 return ConversionResult(
                     convertedSql = convertedSql,
                     warnings = warnings,
@@ -319,6 +337,90 @@ class OracleDialect : AbstractDatabaseDialect() {
         }
     }
     
+    /**
+     * CREATE TABLE 문 변환
+     */
+    private fun convertCreateTable(
+        createTable: CreateTable,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        // 테이블명 인용 문자 변환
+        val tableName = createTable.table.name
+        val convertedTableName = when (targetDialect) {
+            DialectType.MYSQL -> tableName.replace("\"", "`")
+            DialectType.POSTGRESQL -> tableName.replace("\"", "")
+            else -> tableName
+        }
+        createTable.table.name = convertedTableName
+
+        // 컬럼 정의 변환
+        createTable.columnDefinitions?.forEach { colDef ->
+            // 컬럼명 인용 문자 변환
+            val colName = colDef.columnName
+            val convertedColName = when (targetDialect) {
+                DialectType.MYSQL -> colName.replace("\"", "`")
+                DialectType.POSTGRESQL -> colName.replace("\"", "")
+                else -> colName
+            }
+            colDef.columnName = convertedColName
+
+            // 데이터 타입 변환
+            colDef.colDataType?.let { dataType ->
+                val typeName = dataType.dataType
+                val convertedType = getDataTypeMapping(typeName, targetDialect)
+                if (typeName != convertedType) {
+                    dataType.dataType = convertedType
+                    appliedRules.add("$typeName → $convertedType")
+                }
+            }
+        }
+
+        // Primary Key Constraint 변환
+        createTable.indexes?.forEach { index ->
+            index.columnsNames?.forEach { colName ->
+                val convertedColName = when (targetDialect) {
+                    DialectType.MYSQL -> colName.replace("\"", "`")
+                    DialectType.POSTGRESQL -> colName.replace("\"", "")
+                    else -> colName
+                }
+                index.columnsNames = index.columnsNames.map {
+                    if (it == colName) convertedColName else it
+                }
+            }
+        }
+
+        appliedRules.add("CREATE TABLE 구문 변환")
+
+        return createTable.toString()
+    }
+
+    /**
+     * DROP 문 변환
+     */
+    private fun convertDropStatement(
+        drop: Drop,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        // 테이블명 인용 문자 변환
+        drop.name?.let { table ->
+            val tableName = table.name
+            val convertedTableName = when (targetDialect) {
+                DialectType.MYSQL -> tableName.replace("\"", "`")
+                DialectType.POSTGRESQL -> tableName.replace("\"", "")
+                else -> tableName
+            }
+            table.name = convertedTableName
+        }
+
+        appliedRules.add("DROP 구문 변환")
+
+        return drop.toString()
+    }
+
     /**
      * 인용 문자 변환
      */
