@@ -66,3 +66,15 @@ info:
     name: SQL Query Switcher
     description: Online SQL dialect converter for MySQL, PostgreSQL, Oracle, and Tibero
     version: 0.0.1-SNAPSHOT
+
+# OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+    display-request-duration: true
+    display-operation-id: true
+  show-actuator: true

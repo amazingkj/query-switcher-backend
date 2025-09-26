@@ -6,7 +6,8 @@ out/
 ######
 .cursor
 .taskmaster
-
+build
+.env
 
 ### Kotlin ###
 .kotlin
