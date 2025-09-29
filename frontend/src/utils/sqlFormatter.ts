@@ -3,7 +3,7 @@ import { DialectType } from '../types';
 
 // SQL 포맷터 옵션
 interface FormatOptions {
-  language?: 'sql' | 'mysql' | 'postgresql' | 'oracle' | 'sqlite';
+  language?: 'sql' | 'mysql' | 'postgresql' | 'plsql' | 'sqlite';
   tabWidth?: number;
   useTabs?: boolean;
   keywordCase?: 'upper' | 'lower' | 'preserve';
@@ -21,9 +21,9 @@ const dialectToLanguage = (dialect: DialectType): FormatOptions['language'] => {
     case DialectType.POSTGRESQL:
       return 'postgresql';
     case DialectType.ORACLE:
-      return 'oracle';
+      return 'plsql'; // Oracle uses PL/SQL
     case DialectType.TIBERO:
-      return 'oracle'; // Tibero는 Oracle과 유사
+      return 'plsql'; // Tibero uses PL/SQL like Oracle
     default:
       return 'sql';
   }

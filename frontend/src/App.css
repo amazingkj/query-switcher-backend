@@ -73,3 +73,86 @@ button:active {
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
+
+/* 반응형 디자인 개선 */
+@media (max-width: 768px) {
+  .sql-converter {
+    padding: 1rem;
+  }
+  
+  .dual-sql-editor {
+    height: 400px !important;
+  }
+  
+  .monaco-editor {
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .sql-converter {
+    padding: 0.5rem;
+  }
+  
+  .dual-sql-editor {
+    height: 350px !important;
+  }
+  
+  .monaco-editor {
+    font-size: 11px !important;
+  }
+}
+
+/* 그라데이션 텍스트 */
+.bg-gradient-to-r {
+  background-image: linear-gradient(to right, var(--tw-gradient-stops));
+}
+
+.bg-clip-text {
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.text-transparent {
+  color: transparent;
+}
+
+/* 애니메이션 개선 */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 모달 백드롭 */
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+}
+
+/* 카드 호버 효과 */
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* 포커스 링 개선 */
+.focus-ring {
+  transition: all 0.2s ease;
+}
+
+.focus-ring:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+}

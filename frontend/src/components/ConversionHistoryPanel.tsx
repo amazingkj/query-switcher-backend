@@ -41,7 +41,13 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
   }, [history, searchQuery, selectedSourceDialect, selectedTargetDialect, searchHistory, filterByDialect]);
 
   const handleSelectHistory = (item: ConversionHistoryItem) => {
-    onSelectHistory(item);
+    // 타입 호환을 위해 필요한 속성 추가
+    const compatibleItem: ConversionHistoryItem = {
+      ...item,
+      appliedRules: item.appliedRules || [],
+      success: item.success !== undefined ? item.success : true
+    };
+    onSelectHistory(compatibleItem);
     onClose();
   };
 

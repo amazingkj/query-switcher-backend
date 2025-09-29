@@ -127,22 +127,31 @@ export const SqlConverter: React.FC = () => {
   };
 
   return (
-    <div className="sql-converter max-w-7xl mx-auto p-8">
-      {/* 헤더 */}
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          SQL Query Switcher
-        </h1>
-        <p className="text-sm text-gray-600">
-          데이터베이스 간 SQL 쿼리를 쉽게 변환하세요
-        </p>
-        {healthData && (
-          <div className="mt-2 inline-flex items-center px-2 py-1 bg-green-50 border border-green-200 text-xs text-green-700 font-medium">
-            <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-            서버 상태: {healthData.status}
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      <div className="sql-converter max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        {/* 헤더 */}
+        <div className="mb-6 text-center sm:text-left">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
+                <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  SQL Query Switcher
+                </span>
+              </h1>
+              <p className="text-gray-600 text-sm sm:text-base">
+                데이터베이스 간 SQL 쿼리를 쉽게 변환하세요
+              </p>
+            </div>
+            {healthData && (
+              <div className="mt-4 sm:mt-0 flex items-center justify-center sm:justify-end">
+                <div className="flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+                  서버 연결됨
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
 
       {/* 데이터베이스 선택 */}
       <div className="mb-8">
@@ -284,6 +293,7 @@ export const SqlConverter: React.FC = () => {
         sourceDialect={sourceDialect}
         targetDialect={targetDialect}
       />
+      </div>
     </div>
   );
 };
