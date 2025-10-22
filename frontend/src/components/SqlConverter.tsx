@@ -6,10 +6,12 @@ import { SqlSnippetPanel } from './SqlSnippetPanel';
 import { ConversionHistoryPanel } from './ConversionHistoryPanel';
 import { RealtimeSettingsPanel } from './RealtimeSettingsPanel';
 import { ConversionGuidePanel } from './ConversionGuidePanel';
+import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { useSqlStore } from '../stores/sqlStore';
 import { useSqlConvert, useRealtimeConvert, useHealthCheck } from '../hooks/useSqlConvert';
 import { useConversionHistory } from '../hooks/useConversionHistory';
 import { useDebounce } from '../hooks/useDebounce';
+import { useAnalytics, usePageTracking, useConversionTracking, useUserBehaviorTracking } from '../hooks/useAnalytics';
 import type {ConversionRequest, ConversionHistoryItem} from '../types';
 
 export const SqlConverter: React.FC = () => {
@@ -30,10 +32,16 @@ export const SqlConverter: React.FC = () => {
     clearResults
   } = useSqlStore();
 
+  // Analytics hooks
+  usePageTracking('SQL Converter', '/converter');
+  const { trackSqlConversion } = useConversionTracking();
+  const { trackSqlInput, trackDialectChange, trackButtonClick, trackFeatureUse } = useUserBehaviorTracking();
+
   const [isSnippetPanelOpen, setIsSnippetPanelOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
   const [isGuidePanelOpen, setIsGuidePanelOpen] = useState(false);
+  const [isAnalyticsDashboardOpen, setIsAnalyticsDashboardOpen] = useState(false);
 
   const convertMutation = useSqlConvert();
   const realtimeConvertMutation = useRealtimeConvert();
@@ -42,6 +50,18 @@ export const SqlConverter: React.FC = () => {
   
   // 디바운스된 SQL 입력 (1초)
   const debouncedInputSql = useDebounce(inputSql, 1000);
+
+  // SQL 입력 추적
+  useEffect(() => {
+    if (inputSql.trim()) {
+      trackSqlInput(inputSql.length, sourceDialect);
+    }
+  }, [inputSql, sourceDialect, trackSqlInput]);
+
+  // 방언 변경 추적
+  useEffect(() => {
+    trackDialectChange(sourceDialect, targetDialect);
+  }, [sourceDialect, targetDialect, trackDialectChange]);
 
   // 자동 변환 로직
   useEffect(() => {
@@ -71,6 +91,31 @@ export const SqlConverter: React.FC = () => {
       onSuccess: (data) => {
         // 히스토리에 추가
         addConversion(data);
+        
+        // Analytics 추적
+        trackSqlConversion(
+          sourceDialect,
+          targetDialect,
+          inputSql.length,
+          data.warnings.length > 0,
+          data.warnings.length,
+          data.conversionTime,
+          data.success
+        );
+      },
+      onError: (error) => {
+        console.error('Conversion failed:', error);
+        
+        // 실패한 변환도 추적
+        trackSqlConversion(
+          sourceDialect,
+          targetDialect,
+          inputSql.length,
+          false,
+          0,
+          0,
+          false
+        );
       }
     });
   };
@@ -103,6 +148,9 @@ export const SqlConverter: React.FC = () => {
   const handleCopyResult = () => {
     if (outputSql) {
       navigator.clipboard.writeText(outputSql);
+      trackButtonClick('copy_result', { 
+        output_length: outputSql.length 
+      });
       // toast.success('결과가 클립보드에 복사되었습니다.');
     }
   };
@@ -112,10 +160,17 @@ export const SqlConverter: React.FC = () => {
     setSourceDialect(targetDialect);
     setTargetDialect(temp);
     clearResults();
+    trackButtonClick('swap_databases', { 
+      from: sourceDialect, 
+      to: targetDialect 
+    });
   };
 
   const handleSnippetSelect = (sql: string) => {
     setInputSql(sql);
+    trackFeatureUse('sql_snippet', { 
+      snippet_length: sql.length 
+    });
   };
 
   const handleHistorySelect = (item: ConversionHistoryItem) => {
@@ -124,6 +179,9 @@ export const SqlConverter: React.FC = () => {
     setTargetDialect(item.targetDialect);
     setOutputSql(item.convertedSql);
     setWarnings(item.warnings);
+    trackFeatureUse('conversion_history', { 
+      history_timestamp: item.timestamp 
+    });
   };
 
   return (
@@ -172,7 +230,10 @@ export const SqlConverter: React.FC = () => {
             방향 바꾸기
           </button>
           <button
-            onClick={() => setIsSnippetPanelOpen(true)}
+            onClick={() => {
+              setIsSnippetPanelOpen(true);
+              trackButtonClick('open_snippet_panel');
+            }}
             className="px-4 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:bg-purple-700 transition-all duration-200"
           >
             <svg className="w-3 h-3 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,13 +261,28 @@ export const SqlConverter: React.FC = () => {
             설정
           </button>
           <button
-            onClick={() => setIsGuidePanelOpen(true)}
+            onClick={() => {
+              setIsGuidePanelOpen(true);
+              trackButtonClick('open_guide_panel');
+            }}
             className="px-4 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:bg-emerald-700 transition-all duration-200"
           >
             <svg className="w-3 h-3 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             변환 가이드
+          </button>
+          <button
+            onClick={() => {
+              setIsAnalyticsDashboardOpen(true);
+              trackButtonClick('open_analytics_dashboard');
+            }}
+            className="px-4 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:bg-orange-700 transition-all duration-200"
+          >
+            <svg className="w-3 h-3 inline mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            분석
           </button>
           <label className="flex items-center px-3 py-1.5 bg-gray-50 border border-gray-200 hover:border-gray-300 transition-all duration-200">
             <input
@@ -292,6 +368,11 @@ export const SqlConverter: React.FC = () => {
         onClose={() => setIsGuidePanelOpen(false)}
         sourceDialect={sourceDialect}
         targetDialect={targetDialect}
+      />
+      
+      <AnalyticsDashboard
+        isOpen={isAnalyticsDashboardOpen}
+        onClose={() => setIsAnalyticsDashboardOpen(false)}
       />
       </div>
     </div>

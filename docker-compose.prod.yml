@@ -1,0 +1,65 @@
+version: '3.8'
+
+# Production deployment configuration using pre-built images from Docker Hub
+# Replace 'yourusername' with your actual Docker Hub username
+
+services:
+  backend:
+    image: jiin724/sql-converter-backend:latest
+    container_name: sql-converter-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=production
+      - SERVER_PORT=8080
+      - JAVA_OPTS=-Xmx1g -Xms512m
+    networks:
+      - sql-converter-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: jiin724/sql-converter-frontend:latest
+    container_name: sql-converter-frontend
+    ports:
+      - "80:80"
+      - "443:443"  # HTTPS 지원 시
+    depends_on:
+      - backend
+    networks:
+      - sql-converter-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # volumes:
+      # SSL 인증서 마운트 (필요 시)
+      # - ./ssl/cert.pem:/etc/nginx/cert.pem:ro
+      # - ./ssl/key.pem:/etc/nginx/key.pem:ro
+
+networks:
+  sql-converter-network:
+    driver: bridge
+
+# 볼륨 (필요 시)
+volumes:
+  backend-logs:
+    driver: local
