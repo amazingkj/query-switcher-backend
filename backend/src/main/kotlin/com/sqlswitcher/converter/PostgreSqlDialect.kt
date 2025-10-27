@@ -116,27 +116,69 @@ class PostgreSqlDialect : AbstractDatabaseDialect() {
                 }
             }
             DialectType.ORACLE -> {
-                // PostgreSQL LIMIT/OFFSET → Oracle ROWNUM 또는 FETCH FIRST
+                // PostgreSQL LIMIT/OFFSET → Oracle FETCH FIRST
                 if (selectBody.limit != null) {
-                    warnings.add(createWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "PostgreSQL LIMIT 구문을 Oracle ROWNUM 또는 FETCH FIRST로 변환해야 합니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "Oracle 12c 이상에서는 FETCH FIRST n ROWS ONLY를 사용하세요."
-                    ))
-                    appliedRules.add("LIMIT → ROWNUM/FETCH FIRST 변환 필요")
+                    val limitValue = selectBody.limit.rowCount
+                    val offsetValue = selectBody.offset?.offset
+
+                    // FETCH 구문 생성 (Oracle 12c+)
+                    val fetch = Fetch()
+                    fetch.rowCount = limitValue
+                    fetch.isFetchParamFirst = true
+
+                    if (offsetValue != null) {
+                        // OFFSET이 있는 경우
+                        val offset = Offset()
+                        offset.offset = offsetValue
+                        offset.offsetParam = "ROWS"
+                        selectBody.offset = offset
+                        fetch.fetchParam = "ROWS"
+                    } else {
+                        fetch.fetchParam = "ROWS"
+                    }
+
+                    // LIMIT 제거하고 FETCH로 교체
+                    selectBody.limit = null
+                    selectBody.fetch = fetch
+
+                    appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
+
+                    if (offsetValue != null) {
+                        appliedRules.add("OFFSET 구문 추가")
+                    }
                 }
             }
             DialectType.TIBERO -> {
-                // PostgreSQL LIMIT/OFFSET → Tibero ROWNUM 또는 FETCH FIRST
+                // PostgreSQL LIMIT/OFFSET → Tibero FETCH FIRST
                 if (selectBody.limit != null) {
-                    warnings.add(createWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "PostgreSQL LIMIT 구문을 Tibero ROWNUM 또는 FETCH FIRST로 변환해야 합니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "Tibero에서는 FETCH FIRST n ROWS ONLY를 사용하세요."
-                    ))
-                    appliedRules.add("LIMIT → ROWNUM/FETCH FIRST 변환 필요")
+                    val limitValue = selectBody.limit.rowCount
+                    val offsetValue = selectBody.offset?.offset
+
+                    // FETCH 구문 생성 (Tibero는 Oracle 호환)
+                    val fetch = Fetch()
+                    fetch.rowCount = limitValue
+                    fetch.isFetchParamFirst = true
+
+                    if (offsetValue != null) {
+                        // OFFSET이 있는 경우
+                        val offset = Offset()
+                        offset.offset = offsetValue
+                        offset.offsetParam = "ROWS"
+                        selectBody.offset = offset
+                        fetch.fetchParam = "ROWS"
+                    } else {
+                        fetch.fetchParam = "ROWS"
+                    }
+
+                    // LIMIT 제거하고 FETCH로 교체
+                    selectBody.limit = null
+                    selectBody.fetch = fetch
+
+                    appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
+
+                    if (offsetValue != null) {
+                        appliedRules.add("OFFSET 구문 추가")
+                    }
                 }
             }
             else -> {
@@ -214,13 +256,14 @@ class PostgreSqlDialect : AbstractDatabaseDialect() {
                         appliedRules.add("COALESCE() 유지")
                     }
                     "TO_CHAR" -> {
+                        function.name = "DATE_FORMAT"
                         warnings.add(createWarning(
                             type = WarningType.SYNTAX_DIFFERENCE,
-                            message = "PostgreSQL TO_CHAR() 함수를 MySQL DATE_FORMAT()으로 변환해야 합니다.",
+                            message = "PostgreSQL TO_CHAR() 포맷 문자열이 MySQL DATE_FORMAT() 포맷과 다를 수 있습니다.",
                             severity = WarningSeverity.WARNING,
-                            suggestion = "DATE_FORMAT(date, format) 구문을 사용하세요."
+                            suggestion = "포맷 문자열을 MySQL 형식으로 변경하세요. (예: 'YYYY-MM-DD' → '%Y-%m-%d')"
                         ))
-                        appliedRules.add("TO_CHAR() → DATE_FORMAT() 변환 필요")
+                        appliedRules.add("TO_CHAR() → DATE_FORMAT() 변환 완료")
                     }
                     "STRING_AGG" -> {
                         function.name = "GROUP_CONCAT"

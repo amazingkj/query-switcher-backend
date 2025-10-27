@@ -78,32 +78,10 @@ export const useConversionHistory = () => {
     localStorage.removeItem(HISTORY_STORAGE_KEY);
   };
 
-  // 히스토리 검색
-  const searchHistory = (query: string) => {
-    const lowerQuery = query.toLowerCase();
-    return history.filter(item => 
-      item.originalSql.toLowerCase().includes(lowerQuery) ||
-      item.convertedSql.toLowerCase().includes(lowerQuery) ||
-      item.sourceDialect.toLowerCase().includes(lowerQuery) ||
-      item.targetDialect.toLowerCase().includes(lowerQuery)
-    );
-  };
-
-  // 방언별 필터링
-  const filterByDialect = (sourceDialect?: DialectType, targetDialect?: DialectType) => {
-    return history.filter(item => {
-      if (sourceDialect && item.sourceDialect !== sourceDialect) return false;
-      if (targetDialect && item.targetDialect !== targetDialect) return false;
-      return true;
-    });
-  };
-
   return {
     history,
     addConversion,
     removeConversion,
-    clearHistory,
-    searchHistory,
-    filterByDialect
+    clearHistory
   };
 };

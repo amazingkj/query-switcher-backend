@@ -13,32 +13,34 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
   onClose,
   onSelectHistory
 }) => {
-  const { history, removeConversion, clearHistory, searchHistory, filterByDialect } = useConversionHistory();
+  const { history, removeConversion, clearHistory } = useConversionHistory();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSourceDialect, setSelectedSourceDialect] = useState<DialectType | ''>('');
   const [selectedTargetDialect, setSelectedTargetDialect] = useState<DialectType | ''>('');
 
   if (!isOpen) return null;
 
-  // 필터링된 히스토리
-  const filteredHistory = React.useMemo(() => {
-    let filtered = history;
+  // 필터링된 히스토리 (직접 계산, useMemo 제거)
+  let filteredHistory = [...history];
 
-    // 검색어 필터링
-    if (searchQuery) {
-      filtered = searchHistory(searchQuery);
-    }
+  // 검색어 필터링
+  if (searchQuery.trim()) {
+    const lowerQuery = searchQuery.toLowerCase();
+    filteredHistory = filteredHistory.filter(item =>
+      item.originalSql.toLowerCase().includes(lowerQuery) ||
+      item.convertedSql.toLowerCase().includes(lowerQuery) ||
+      item.sourceDialect.toLowerCase().includes(lowerQuery) ||
+      item.targetDialect.toLowerCase().includes(lowerQuery)
+    );
+  }
 
-    // 방언 필터링
-    if (selectedSourceDialect || selectedTargetDialect) {
-      filtered = filterByDialect(
-        selectedSourceDialect || undefined,
-        selectedTargetDialect || undefined
-      );
-    }
-
-    return filtered;
-  }, [history, searchQuery, selectedSourceDialect, selectedTargetDialect, searchHistory, filterByDialect]);
+  // 방언 필터링
+  if (selectedSourceDialect) {
+    filteredHistory = filteredHistory.filter(item => item.sourceDialect === selectedSourceDialect);
+  }
+  if (selectedTargetDialect) {
+    filteredHistory = filteredHistory.filter(item => item.targetDialect === selectedTargetDialect);
+  }
 
   const handleSelectHistory = (item: ConversionHistoryItem) => {
     // 타입 호환을 위해 필요한 속성 추가

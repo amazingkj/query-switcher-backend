@@ -374,6 +374,13 @@ export const SqlConverter: React.FC = () => {
         isOpen={isAnalyticsDashboardOpen}
         onClose={() => setIsAnalyticsDashboardOpen(false)}
       />
+
+      {/* Copyright Footer */}
+      <div className="mt-12 pt-8 border-t border-gray-200">
+        <p className="text-center text-xs text-gray-400">
+          © 2025 SQL2SQL. All rights reserved.
+        </p>
+      </div>
       </div>
     </div>
   );

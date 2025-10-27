@@ -3,7 +3,7 @@ import type {ConversionRequest, ConversionResponse, ErrorResponse} from '../type
 
 // API 클라이언트 설정
 const apiClient: AxiosInstance = axios.create({
-  baseURL: 'http://localhost:18080/api/v1',
+  baseURL: '/api/v1',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',

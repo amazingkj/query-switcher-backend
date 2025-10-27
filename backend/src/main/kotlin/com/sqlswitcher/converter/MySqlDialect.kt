@@ -116,27 +116,69 @@ class MySqlDialect : AbstractDatabaseDialect() {
                 }
             }
             DialectType.ORACLE -> {
-                // MySQL LIMIT/OFFSET → Oracle ROWNUM 또는 FETCH FIRST
+                // MySQL LIMIT/OFFSET → Oracle FETCH FIRST
                 if (selectBody.limit != null) {
-                    warnings.add(createWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "MySQL LIMIT 구문을 Oracle ROWNUM 또는 FETCH FIRST로 변환해야 합니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "Oracle 12c 이상에서는 FETCH FIRST n ROWS ONLY를 사용하세요."
-                    ))
-                    appliedRules.add("LIMIT → ROWNUM/FETCH FIRST 변환 필요")
+                    val limitValue = selectBody.limit.rowCount
+                    val offsetValue = selectBody.offset?.offset
+
+                    // FETCH 구문 생성 (Oracle 12c+)
+                    val fetch = Fetch()
+                    fetch.rowCount = limitValue
+                    fetch.isFetchParamFirst = true
+
+                    if (offsetValue != null) {
+                        // OFFSET이 있는 경우
+                        val offset = Offset()
+                        offset.offset = offsetValue
+                        offset.offsetParam = "ROWS"
+                        selectBody.offset = offset
+                        fetch.fetchParam = "ROWS"
+                    } else {
+                        fetch.fetchParam = "ROWS"
+                    }
+
+                    // LIMIT 제거하고 FETCH로 교체
+                    selectBody.limit = null
+                    selectBody.fetch = fetch
+
+                    appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
+
+                    if (offsetValue != null) {
+                        appliedRules.add("OFFSET 구문 추가")
+                    }
                 }
             }
             DialectType.TIBERO -> {
-                // MySQL LIMIT/OFFSET → Tibero ROWNUM 또는 FETCH FIRST
+                // MySQL LIMIT/OFFSET → Tibero FETCH FIRST
                 if (selectBody.limit != null) {
-                    warnings.add(createWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "MySQL LIMIT 구문을 Tibero ROWNUM 또는 FETCH FIRST로 변환해야 합니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "Tibero에서는 FETCH FIRST n ROWS ONLY를 사용하세요."
-                    ))
-                    appliedRules.add("LIMIT → ROWNUM/FETCH FIRST 변환 필요")
+                    val limitValue = selectBody.limit.rowCount
+                    val offsetValue = selectBody.offset?.offset
+
+                    // FETCH 구문 생성 (Tibero는 Oracle 호환)
+                    val fetch = Fetch()
+                    fetch.rowCount = limitValue
+                    fetch.isFetchParamFirst = true
+
+                    if (offsetValue != null) {
+                        // OFFSET이 있는 경우
+                        val offset = Offset()
+                        offset.offset = offsetValue
+                        offset.offsetParam = "ROWS"
+                        selectBody.offset = offset
+                        fetch.fetchParam = "ROWS"
+                    } else {
+                        fetch.fetchParam = "ROWS"
+                    }
+
+                    // LIMIT 제거하고 FETCH로 교체
+                    selectBody.limit = null
+                    selectBody.fetch = fetch
+
+                    appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
+
+                    if (offsetValue != null) {
+                        appliedRules.add("OFFSET 구문 추가")
+                    }
                 }
             }
             else -> {
@@ -156,8 +198,9 @@ class MySqlDialect : AbstractDatabaseDialect() {
     ) {
         // SELECT 절의 함수들 변환
         selectBody.selectItems?.forEach { selectItem ->
-            // Skip for now - will be handled differently based on JSQLParser API
-            // convertExpression(selectItem.expression, targetDialect, warnings, appliedRules)
+            selectItem.expression?.let { expression ->
+                convertExpression(expression, targetDialect, warnings, appliedRules)
+            }
         }
         
         // WHERE 절의 함수들 변환
@@ -210,13 +253,14 @@ class MySqlDialect : AbstractDatabaseDialect() {
                         appliedRules.add("IFNULL() → COALESCE()")
                     }
                     "DATE_FORMAT" -> {
+                        function.name = "TO_CHAR"
                         warnings.add(createWarning(
                             type = WarningType.SYNTAX_DIFFERENCE,
-                            message = "MySQL DATE_FORMAT() 함수를 PostgreSQL TO_CHAR()로 변환해야 합니다.",
+                            message = "MySQL DATE_FORMAT() 포맷 문자열이 PostgreSQL TO_CHAR() 포맷과 다를 수 있습니다.",
                             severity = WarningSeverity.WARNING,
-                            suggestion = "TO_CHAR(date, format) 구문을 사용하세요."
+                            suggestion = "포맷 문자열을 PostgreSQL 형식으로 변경하세요. (예: '%Y-%m-%d' → 'YYYY-MM-DD')"
                         ))
-                        appliedRules.add("DATE_FORMAT() → TO_CHAR() 변환 필요")
+                        appliedRules.add("DATE_FORMAT() → TO_CHAR() 변환 완료")
                     }
                 }
             }
