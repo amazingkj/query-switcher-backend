@@ -115,29 +115,47 @@ class TiberoDialect : AbstractDatabaseDialect() {
         appliedRules: MutableList<String>
     ) {
         when (targetDialect) {
-            DialectType.MYSQL -> {
-                // Tibero ROWNUM → MySQL LIMIT 변환
-                warnings.add(createWarning(
-                    type = WarningType.SYNTAX_DIFFERENCE,
-                    message = "Tibero ROWNUM 구문을 MySQL LIMIT으로 변환해야 합니다.",
-                    severity = WarningSeverity.WARNING,
-                    suggestion = "LIMIT n OFFSET m 구문을 사용하세요."
-                ))
-                appliedRules.add("ROWNUM → LIMIT 변환 필요")
-            }
-            DialectType.POSTGRESQL -> {
-                // Tibero ROWNUM → PostgreSQL LIMIT 변환
-                warnings.add(createWarning(
-                    type = WarningType.SYNTAX_DIFFERENCE,
-                    message = "Tibero ROWNUM 구문을 PostgreSQL LIMIT으로 변환해야 합니다.",
-                    severity = WarningSeverity.WARNING,
-                    suggestion = "LIMIT n OFFSET m 구문을 사용하세요."
-                ))
-                appliedRules.add("ROWNUM → LIMIT 변환 필요")
+            DialectType.MYSQL, DialectType.POSTGRESQL -> {
+                // Tibero FETCH FIRST → MySQL/PostgreSQL LIMIT 변환
+                if (selectBody.fetch != null) {
+                    val fetchValue = selectBody.fetch.rowCount
+                    val offsetValue = selectBody.offset?.offset
+
+                    // LIMIT 구문 생성
+                    val limit = Limit()
+                    limit.rowCount = fetchValue
+
+                    if (offsetValue != null) {
+                        val offset = Offset()
+                        offset.offset = offsetValue
+                        selectBody.offset = offset
+                    }
+
+                    // FETCH 제거하고 LIMIT로 교체
+                    selectBody.fetch = null
+                    selectBody.limit = limit
+
+                    appliedRules.add("FETCH FIRST → LIMIT 변환 완료")
+
+                    if (offsetValue != null) {
+                        appliedRules.add("OFFSET 구문 유지")
+                    }
+                }
+
+                // Tibero ROWNUM → LIMIT 변환은 복잡하여 경고만 제공
+                if (selectBody.fetch == null && selectBody.limit == null) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Tibero ROWNUM 구문을 LIMIT으로 변환해야 합니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "LIMIT n OFFSET m 구문을 사용하세요."
+                    ))
+                    appliedRules.add("ROWNUM → LIMIT 수동 변환 필요")
+                }
             }
             DialectType.ORACLE -> {
-                // Tibero와 Oracle은 동일한 ROWNUM 구문 사용
-                appliedRules.add("ROWNUM 구문 유지")
+                // Tibero와 Oracle은 동일한 구문 사용
+                appliedRules.add("Tibero 구문 유지")
             }
             else -> {
                 // Tibero는 그대로
