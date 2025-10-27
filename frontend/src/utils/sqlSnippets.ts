@@ -92,6 +92,145 @@ WHERE id IN (
     description: 'Oracle 날짜 포맷팅',
     sql: "SELECT TO_CHAR(created_at, 'YYYY-MM-DD') as date FROM table_name;",
     dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: 'Oracle FETCH FIRST',
+    description: 'Oracle 12c+ FETCH FIRST 구문',
+    sql: `SELECT * FROM employees
+WHERE salary > 5000
+ORDER BY hire_date DESC
+FETCH FIRST 10 ROWS ONLY;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: 'Oracle FETCH with OFFSET',
+    description: 'Oracle OFFSET과 FETCH 함께 사용',
+    sql: `SELECT * FROM products
+ORDER BY price DESC
+OFFSET 20 ROWS FETCH FIRST 10 ROWS ONLY;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: 'MySQL GROUP_CONCAT',
+    description: 'MySQL 문자열 집계 함수',
+    sql: `SELECT department_id,
+       GROUP_CONCAT(employee_name ORDER BY employee_name SEPARATOR ', ') as employees
+FROM employees
+GROUP BY department_id;`,
+    dialect: [DialectType.MYSQL]
+  },
+  {
+    label: 'PostgreSQL STRING_AGG',
+    description: 'PostgreSQL 문자열 집계 함수',
+    sql: `SELECT department_id,
+       STRING_AGG(employee_name, ', ' ORDER BY employee_name) as employees
+FROM employees
+GROUP BY department_id;`,
+    dialect: [DialectType.POSTGRESQL]
+  },
+  {
+    label: 'Oracle LISTAGG',
+    description: 'Oracle 문자열 집계 함수',
+    sql: `SELECT department_id,
+       LISTAGG(employee_name, ', ') WITHIN GROUP (ORDER BY employee_name) as employees
+FROM employees
+GROUP BY department_id;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: 'MySQL IFNULL',
+    description: 'MySQL NULL 처리',
+    sql: `SELECT
+    employee_name,
+    IFNULL(phone_number, 'N/A') as phone,
+    IFNULL(email, 'no-email@company.com') as email
+FROM employees;`,
+    dialect: [DialectType.MYSQL]
+  },
+  {
+    label: 'PostgreSQL COALESCE',
+    description: 'PostgreSQL NULL 처리',
+    sql: `SELECT
+    employee_name,
+    COALESCE(phone_number, 'N/A') as phone,
+    COALESCE(email, 'no-email@company.com') as email
+FROM employees;`,
+    dialect: [DialectType.POSTGRESQL]
+  },
+  {
+    label: 'Oracle NVL',
+    description: 'Oracle NULL 처리',
+    sql: `SELECT
+    employee_name,
+    NVL(phone_number, 'N/A') as phone,
+    NVL(email, 'no-email@company.com') as email
+FROM employees;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: 'MySQL NOW',
+    description: 'MySQL 현재 시간',
+    sql: `SELECT
+    order_id,
+    created_at,
+    NOW() as current_time,
+    TIMESTAMPDIFF(DAY, created_at, NOW()) as days_since_order
+FROM orders;`,
+    dialect: [DialectType.MYSQL]
+  },
+  {
+    label: 'PostgreSQL CURRENT_TIMESTAMP',
+    description: 'PostgreSQL 현재 시간',
+    sql: `SELECT
+    order_id,
+    created_at,
+    CURRENT_TIMESTAMP as current_time,
+    EXTRACT(DAY FROM CURRENT_TIMESTAMP - created_at) as days_since_order
+FROM orders;`,
+    dialect: [DialectType.POSTGRESQL]
+  },
+  {
+    label: 'Oracle SYSDATE',
+    description: 'Oracle 현재 시간',
+    sql: `SELECT
+    order_id,
+    created_at,
+    SYSDATE as current_time,
+    TRUNC(SYSDATE - created_at) as days_since_order
+FROM orders;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+  },
+  {
+    label: '복잡한 SELECT (MySQL)',
+    description: '여러 함수와 구문을 포함한 복합 쿼리',
+    sql: `SELECT
+    e.employee_name,
+    e.department_id,
+    DATE_FORMAT(e.hire_date, '%Y-%m-%d') as hire_date,
+    IFNULL(e.salary, 0) as salary,
+    NOW() as query_time
+FROM employees e
+WHERE e.status = 'active'
+    AND e.salary > 3000
+ORDER BY e.hire_date DESC
+LIMIT 20;`,
+    dialect: [DialectType.MYSQL]
+  },
+  {
+    label: '복잡한 SELECT (Oracle)',
+    description: '여러 함수와 구문을 포함한 복합 쿼리',
+    sql: `SELECT
+    e.employee_name,
+    e.department_id,
+    TO_CHAR(e.hire_date, 'YYYY-MM-DD') as hire_date,
+    NVL(e.salary, 0) as salary,
+    SYSDATE as query_time
+FROM employees e
+WHERE e.status = 'active'
+    AND e.salary > 3000
+ORDER BY e.hire_date DESC
+FETCH FIRST 20 ROWS ONLY;`,
+    dialect: [DialectType.ORACLE, DialectType.TIBERO]
   }
 ];
 
