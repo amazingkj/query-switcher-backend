@@ -13,6 +13,7 @@ import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
 import net.sf.jsqlparser.expression.CastExpression
+import net.sf.jsqlparser.expression.LongValue
 import net.sf.jsqlparser.expression.operators.relational.ExpressionList
 import net.sf.jsqlparser.expression.BinaryExpression
 import org.springframework.stereotype.Component
@@ -118,23 +119,21 @@ class MySqlDialect : AbstractDatabaseDialect() {
             DialectType.ORACLE -> {
                 // MySQL LIMIT/OFFSET → Oracle FETCH FIRST
                 if (selectBody.limit != null) {
-                    val limitValue = selectBody.limit.rowCount
-                    val offsetValue = selectBody.offset?.offset
+                    val limitExpr = selectBody.limit.rowCount
+                    val limitValue = when (limitExpr) {
+                        is LongValue -> limitExpr.value
+                        else -> limitExpr?.toString()?.toLongOrNull() ?: 10L
+                    }
 
                     // FETCH 구문 생성 (Oracle 12c+)
                     val fetch = Fetch()
                     fetch.rowCount = limitValue
                     fetch.isFetchParamFirst = true
+                    fetch.fetchParam = "ROWS"
 
-                    if (offsetValue != null) {
-                        // OFFSET이 있는 경우
-                        val offset = Offset()
-                        offset.offset = offsetValue
-                        offset.offsetParam = "ROWS"
-                        selectBody.offset = offset
-                        fetch.fetchParam = "ROWS"
-                    } else {
-                        fetch.fetchParam = "ROWS"
+                    if (selectBody.offset != null) {
+                        selectBody.offset.offsetParam = "ROWS"
+                        appliedRules.add("OFFSET 구문 유지")
                     }
 
                     // LIMIT 제거하고 FETCH로 교체
@@ -142,32 +141,26 @@ class MySqlDialect : AbstractDatabaseDialect() {
                     selectBody.fetch = fetch
 
                     appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
-
-                    if (offsetValue != null) {
-                        appliedRules.add("OFFSET 구문 추가")
-                    }
                 }
             }
             DialectType.TIBERO -> {
                 // MySQL LIMIT/OFFSET → Tibero FETCH FIRST
                 if (selectBody.limit != null) {
-                    val limitValue = selectBody.limit.rowCount
-                    val offsetValue = selectBody.offset?.offset
+                    val limitExpr = selectBody.limit.rowCount
+                    val limitValue = when (limitExpr) {
+                        is LongValue -> limitExpr.value
+                        else -> limitExpr?.toString()?.toLongOrNull() ?: 10L
+                    }
 
                     // FETCH 구문 생성 (Tibero는 Oracle 호환)
                     val fetch = Fetch()
                     fetch.rowCount = limitValue
                     fetch.isFetchParamFirst = true
+                    fetch.fetchParam = "ROWS"
 
-                    if (offsetValue != null) {
-                        // OFFSET이 있는 경우
-                        val offset = Offset()
-                        offset.offset = offsetValue
-                        offset.offsetParam = "ROWS"
-                        selectBody.offset = offset
-                        fetch.fetchParam = "ROWS"
-                    } else {
-                        fetch.fetchParam = "ROWS"
+                    if (selectBody.offset != null) {
+                        selectBody.offset.offsetParam = "ROWS"
+                        appliedRules.add("OFFSET 구문 유지")
                     }
 
                     // LIMIT 제거하고 FETCH로 교체
@@ -175,10 +168,6 @@ class MySqlDialect : AbstractDatabaseDialect() {
                     selectBody.fetch = fetch
 
                     appliedRules.add("LIMIT → FETCH FIRST 변환 완료")
-
-                    if (offsetValue != null) {
-                        appliedRules.add("OFFSET 구문 추가")
-                    }
                 }
             }
             else -> {

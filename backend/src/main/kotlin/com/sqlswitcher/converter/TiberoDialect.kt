@@ -13,6 +13,7 @@ import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
 import net.sf.jsqlparser.expression.CastExpression
+import net.sf.jsqlparser.expression.LongValue
 import net.sf.jsqlparser.expression.operators.relational.ExpressionList
 import org.springframework.stereotype.Component
 
@@ -119,17 +120,10 @@ class TiberoDialect : AbstractDatabaseDialect() {
                 // Tibero FETCH FIRST → MySQL/PostgreSQL LIMIT 변환
                 if (selectBody.fetch != null) {
                     val fetchValue = selectBody.fetch.rowCount
-                    val offsetValue = selectBody.offset?.offset
 
-                    // LIMIT 구문 생성
+                    // LIMIT 구문 생성 - Expression을 LongValue로 변환
                     val limit = Limit()
-                    limit.rowCount = fetchValue
-
-                    if (offsetValue != null) {
-                        val offset = Offset()
-                        offset.offset = offsetValue
-                        selectBody.offset = offset
-                    }
+                    limit.rowCount = LongValue(fetchValue)
 
                     // FETCH 제거하고 LIMIT로 교체
                     selectBody.fetch = null
@@ -137,7 +131,7 @@ class TiberoDialect : AbstractDatabaseDialect() {
 
                     appliedRules.add("FETCH FIRST → LIMIT 변환 완료")
 
-                    if (offsetValue != null) {
+                    if (selectBody.offset != null) {
                         appliedRules.add("OFFSET 구문 유지")
                     }
                 }

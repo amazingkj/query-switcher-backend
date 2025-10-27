@@ -5,23 +5,12 @@ import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
 import net.sf.jsqlparser.statement.select.PlainSelect
 import net.sf.jsqlparser.statement.select.Limit
-import net.sf.jsqlparser.statement.select.Offset
-import net.sf.jsqlparser.statement.select.Top
-import net.sf.jsqlparser.statement.select.Fetch
-import net.sf.jsqlparser.statement.select.SelectItem
 import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.statement.drop.Drop
 import net.sf.jsqlparser.expression.Function as SqlFunction
-import net.sf.jsqlparser.expression.StringValue
+
 import net.sf.jsqlparser.expression.Expression
-import net.sf.jsqlparser.expression.CastExpression
-import net.sf.jsqlparser.expression.CaseExpression
-import net.sf.jsqlparser.expression.WhenClause
-import net.sf.jsqlparser.expression.operators.conditional.AndExpression
-import net.sf.jsqlparser.expression.operators.relational.ExpressionList
-import net.sf.jsqlparser.expression.operators.relational.IsNullExpression
-import net.sf.jsqlparser.expression.operators.relational.EqualsTo
-import net.sf.jsqlparser.expression.NotExpression
+import net.sf.jsqlparser.expression.LongValue
 import org.springframework.stereotype.Component
 
 /**
@@ -139,17 +128,10 @@ class OracleDialect : AbstractDatabaseDialect() {
                 // Oracle FETCH FIRST → MySQL/PostgreSQL LIMIT 변환
                 if (selectBody.fetch != null) {
                     val fetchValue = selectBody.fetch.rowCount
-                    val offsetValue = selectBody.offset?.offset
 
-                    // LIMIT 구문 생성
+                    // LIMIT 구문 생성 - Expression을 LongValue로 변환
                     val limit = Limit()
-                    limit.rowCount = fetchValue
-
-                    if (offsetValue != null) {
-                        val offset = Offset()
-                        offset.offset = offsetValue
-                        selectBody.offset = offset
-                    }
+                    limit.rowCount = LongValue(fetchValue)
 
                     // FETCH 제거하고 LIMIT로 교체
                     selectBody.fetch = null
@@ -157,7 +139,7 @@ class OracleDialect : AbstractDatabaseDialect() {
 
                     appliedRules.add("FETCH FIRST → LIMIT 변환 완료")
 
-                    if (offsetValue != null) {
+                    if (selectBody.offset != null) {
                         appliedRules.add("OFFSET 구문 유지")
                     }
                 }
