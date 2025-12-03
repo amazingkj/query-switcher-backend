@@ -13,6 +13,7 @@ import net.sf.jsqlparser.statement.select.SelectItem
 import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.statement.create.table.ColumnDefinition
 import net.sf.jsqlparser.statement.create.table.Index
+import net.sf.jsqlparser.statement.create.table.ForeignKeyIndex
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -476,11 +477,39 @@ class MySqlDialect : AbstractDatabaseDialect() {
             }
         }
 
-        // PRIMARY KEY 정보 추출
+        // PRIMARY KEY 및 FOREIGN KEY 정보 추출
+        val foreignKeys = mutableListOf<ForeignKeyInfo>()
+
         createTable.indexes?.forEach { index ->
-            if (index.type?.uppercase() == "PRIMARY KEY" || index.toString().uppercase().contains("PRIMARY KEY")) {
+            val indexStr = index.toString().uppercase()
+            if (index.type?.uppercase() == "PRIMARY KEY" || indexStr.contains("PRIMARY KEY")) {
                 primaryKeyColumns = index.columnsNames?.map { it.trim('`', '"') }
                 primaryKeyName = "PK_${rawTableName.removePrefix("TB_").removePrefix("T_")}"
+            }
+
+            // FOREIGN KEY 추출 (ForeignKeyIndex 타입 체크)
+            if (index is ForeignKeyIndex) {
+                val fkIndex = index as ForeignKeyIndex
+                val fkColumns = fkIndex.columnsNames?.map { it.trim('`', '"') } ?: emptyList()
+                val referencedTable = fkIndex.table?.name?.trim('`', '"')
+                val referencedColumns = fkIndex.referencedColumnNames?.map { it.trim('`', '"') } ?: emptyList()
+
+                // ON DELETE/UPDATE 액션 추출 (deprecated API 사용, 향후 JSQLParser 업데이트 시 수정 필요)
+                @Suppress("DEPRECATION")
+                val onDeleteAction = fkIndex.onDeleteReferenceOption
+                @Suppress("DEPRECATION")
+                val onUpdateAction = fkIndex.onUpdateReferenceOption
+
+                if (fkColumns.isNotEmpty()) {
+                    foreignKeys.add(ForeignKeyInfo(
+                        constraintName = fkIndex.name?.trim('`', '"') ?: "FK_${rawTableName}_${fkColumns.first()}",
+                        columns = fkColumns,
+                        referencedTable = referencedTable ?: "",
+                        referencedColumns = referencedColumns,
+                        onDelete = onDeleteAction,
+                        onUpdate = onUpdateAction
+                    ))
+                }
             }
         }
 
@@ -597,6 +626,26 @@ class MySqlDialect : AbstractDatabaseDialect() {
             }
 
             appliedRules.add("PRIMARY KEY를 별도 ALTER TABLE로 분리")
+        }
+
+        // FOREIGN KEY 제약조건 생성
+        if (foreignKeys.isNotEmpty()) {
+            result.appendLine()
+
+            foreignKeys.forEach { fk ->
+                if (fk.referencedTable.isNotEmpty() && fk.referencedColumns.isNotEmpty()) {
+                    result.appendLine(fk.toOracleConstraint(schemaOwner, rawTableName) + ";")
+                } else {
+                    warnings.add(createWarning(
+                        type = WarningType.PARTIAL_SUPPORT,
+                        message = "FOREIGN KEY '${fk.constraintName}'의 참조 테이블/컬럼 정보가 불완전합니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "FOREIGN KEY 제약조건을 수동으로 확인하세요."
+                    ))
+                }
+            }
+
+            appliedRules.add("FOREIGN KEY를 별도 ALTER TABLE로 분리")
         }
 
         return result.toString().trim()
