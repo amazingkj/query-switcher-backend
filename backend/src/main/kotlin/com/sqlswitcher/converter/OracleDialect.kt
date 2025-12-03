@@ -814,6 +814,547 @@ class OracleDialect : AbstractDatabaseDialect() {
     }
     
     override fun convertToOracleDataType(dataType: String): String = dataType
-    
+
     override fun convertToTiberoDataType(dataType: String): String = dataType
+
+    /**
+     * Oracle SELECT 쿼리 문자열을 다른 방언으로 변환 (ROWNUM, DECODE 포함)
+     */
+    fun convertSelectQueryFromString(
+        selectSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = selectSql
+
+        when (targetDialect) {
+            DialectType.MYSQL, DialectType.POSTGRESQL -> {
+                // DECODE → CASE WHEN 변환
+                result = convertDecodeToCase(result, warnings, appliedRules)
+
+                // NVL2 → CASE WHEN 변환
+                result = convertNvl2ToCase(result, warnings, appliedRules)
+
+                // ROWNUM → LIMIT/ROW_NUMBER() 변환
+                result = convertRownumToLimit(result, targetDialect, warnings, appliedRules)
+
+                // 함수 변환
+                result = convertOracleFunctionsInQuery(result, targetDialect, warnings, appliedRules)
+
+                // 인용 문자 변환
+                if (targetDialect == DialectType.MYSQL) {
+                    result = result.replace("\"", "`")
+                    appliedRules.add("큰따옴표(\") → 백틱(`) 변환")
+                }
+            }
+            DialectType.TIBERO -> {
+                // Tibero는 Oracle과 호환
+                appliedRules.add("Oracle 구문 유지 (Tibero 호환)")
+            }
+            else -> { }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle DECODE 함수를 CASE WHEN 구문으로 변환
+     * DECODE(expr, search1, result1, search2, result2, ..., default)
+     * → CASE expr WHEN search1 THEN result1 WHEN search2 THEN result2 ... ELSE default END
+     */
+    private fun convertDecodeToCase(
+        sql: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        // DECODE 함수 패턴 매칭 (중첩 괄호 처리를 위한 재귀적 파싱)
+        val decodePattern = Regex("\\bDECODE\\s*\\(", RegexOption.IGNORE_CASE)
+        var match = decodePattern.find(result)
+
+        while (match != null) {
+            val startIndex = match.range.first
+            val argsStartIndex = match.range.last + 1
+
+            // 괄호 매칭으로 DECODE 인자 추출
+            val args = extractFunctionArguments(result, argsStartIndex - 1)
+            if (args.isNotEmpty()) {
+                val endIndex = findMatchingParenthesis(result, argsStartIndex - 1)
+                if (endIndex > argsStartIndex) {
+                    val caseExpr = convertDecodeToCaseExpression(args)
+                    result = result.substring(0, startIndex) + caseExpr + result.substring(endIndex + 1)
+                }
+            }
+
+            match = decodePattern.find(result, startIndex + 1)
+        }
+
+        if (result != sql) {
+            appliedRules.add("DECODE() → CASE WHEN 변환 완료")
+        }
+
+        return result
+    }
+
+    /**
+     * DECODE 인자를 CASE WHEN 표현식으로 변환
+     */
+    private fun convertDecodeToCaseExpression(args: List<String>): String {
+        if (args.isEmpty()) return "NULL"
+
+        val expr = args[0].trim()
+        val sb = StringBuilder("CASE ")
+
+        // 단순 CASE 형식 (검색값이 동등 비교인 경우)
+        var hasDefault = false
+        var i = 1
+        while (i < args.size) {
+            if (i + 1 < args.size) {
+                // search, result 쌍
+                val search = args[i].trim()
+                val resultVal = args[i + 1].trim()
+
+                // NULL 검색인 경우 특별 처리
+                if (search.uppercase() == "NULL") {
+                    sb.append("WHEN $expr IS NULL THEN $resultVal ")
+                } else {
+                    sb.append("WHEN $expr = $search THEN $resultVal ")
+                }
+                i += 2
+            } else {
+                // 마지막 하나가 남으면 default
+                sb.append("ELSE ${args[i].trim()} ")
+                hasDefault = true
+                i++
+            }
+        }
+
+        sb.append("END")
+        return sb.toString()
+    }
+
+    /**
+     * Oracle NVL2 함수를 CASE WHEN 구문으로 변환
+     * NVL2(expr, not_null_value, null_value)
+     * → CASE WHEN expr IS NOT NULL THEN not_null_value ELSE null_value END
+     */
+    private fun convertNvl2ToCase(
+        sql: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        val nvl2Pattern = Regex("\\bNVL2\\s*\\(", RegexOption.IGNORE_CASE)
+        var match = nvl2Pattern.find(result)
+
+        while (match != null) {
+            val startIndex = match.range.first
+            val argsStartIndex = match.range.last + 1
+
+            val args = extractFunctionArguments(result, argsStartIndex - 1)
+            if (args.size >= 3) {
+                val endIndex = findMatchingParenthesis(result, argsStartIndex - 1)
+                if (endIndex > argsStartIndex) {
+                    val expr = args[0].trim()
+                    val notNullVal = args[1].trim()
+                    val nullVal = args[2].trim()
+
+                    val caseExpr = "CASE WHEN $expr IS NOT NULL THEN $notNullVal ELSE $nullVal END"
+                    result = result.substring(0, startIndex) + caseExpr + result.substring(endIndex + 1)
+                }
+            }
+
+            match = nvl2Pattern.find(result, startIndex + 1)
+        }
+
+        if (result != sql) {
+            appliedRules.add("NVL2() → CASE WHEN 변환 완료")
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle ROWNUM을 LIMIT 또는 ROW_NUMBER()로 변환
+     * - WHERE ROWNUM <= n → LIMIT n
+     * - WHERE ROWNUM = 1 → LIMIT 1
+     * - 복잡한 ROWNUM 사용 → ROW_NUMBER() OVER() 권장
+     */
+    private fun convertRownumToLimit(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+        val upperSql = sql.uppercase()
+
+        // 패턴 1: WHERE ROWNUM <= n 또는 WHERE ROWNUM < n
+        val rownumLePattern = Regex(
+            "WHERE\\s+ROWNUM\\s*<=?\\s*(\\d+)",
+            RegexOption.IGNORE_CASE
+        )
+        val leMatch = rownumLePattern.find(result)
+        if (leMatch != null) {
+            val limitValue = leMatch.groupValues[1].toIntOrNull() ?: 10
+            val actualLimit = if (leMatch.value.contains("<") && !leMatch.value.contains("<=")) {
+                limitValue - 1
+            } else {
+                limitValue
+            }
+
+            // WHERE ROWNUM <= n 제거하고 LIMIT 추가
+            result = result.replace(leMatch.value, "")
+            // 남은 AND/OR 정리
+            result = result.replace(Regex("\\bWHERE\\s+AND\\b", RegexOption.IGNORE_CASE), "WHERE")
+            result = result.replace(Regex("\\bAND\\s+AND\\b", RegexOption.IGNORE_CASE), "AND")
+            result = result.trim()
+            if (result.uppercase().endsWith("WHERE")) {
+                result = result.dropLast(5).trim()
+            }
+
+            // LIMIT 추가
+            result = "$result LIMIT $actualLimit"
+            appliedRules.add("WHERE ROWNUM <= $limitValue → LIMIT $actualLimit 변환")
+        }
+
+        // 패턴 2: AND ROWNUM <= n (WHERE 절 중간에 있는 경우)
+        val andRownumPattern = Regex(
+            "AND\\s+ROWNUM\\s*<=?\\s*(\\d+)",
+            RegexOption.IGNORE_CASE
+        )
+        val andMatch = andRownumPattern.find(result)
+        if (andMatch != null) {
+            val limitValue = andMatch.groupValues[1].toIntOrNull() ?: 10
+            val actualLimit = if (andMatch.value.contains("<") && !andMatch.value.contains("<=")) {
+                limitValue - 1
+            } else {
+                limitValue
+            }
+
+            result = result.replace(andMatch.value, "")
+            result = "$result LIMIT $actualLimit"
+            appliedRules.add("AND ROWNUM <= $limitValue → LIMIT $actualLimit 변환")
+        }
+
+        // 패턴 3: ROWNUM = 1
+        val rownumEqPattern = Regex(
+            "WHERE\\s+ROWNUM\\s*=\\s*1",
+            RegexOption.IGNORE_CASE
+        )
+        if (rownumEqPattern.containsMatchIn(result)) {
+            result = result.replace(rownumEqPattern, "")
+            result = result.replace(Regex("\\bWHERE\\s+AND\\b", RegexOption.IGNORE_CASE), "WHERE")
+            result = result.trim()
+            if (result.uppercase().endsWith("WHERE")) {
+                result = result.dropLast(5).trim()
+            }
+            result = "$result LIMIT 1"
+            appliedRules.add("WHERE ROWNUM = 1 → LIMIT 1 변환")
+        }
+
+        // 패턴 4: 서브쿼리 내의 ROWNUM (페이징)
+        // SELECT * FROM (SELECT ..., ROWNUM rn FROM ...) WHERE rn BETWEEN x AND y
+        val pagingPattern = Regex(
+            "ROWNUM\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)",
+            RegexOption.IGNORE_CASE
+        )
+        if (pagingPattern.containsMatchIn(result)) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "Oracle ROWNUM 기반 페이징은 LIMIT/OFFSET 또는 ROW_NUMBER()로 변환이 필요합니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = when (targetDialect) {
+                    DialectType.MYSQL -> "SELECT * FROM table LIMIT offset, count 형식을 사용하세요."
+                    DialectType.POSTGRESQL -> "SELECT * FROM table LIMIT count OFFSET offset 형식을 사용하세요."
+                    else -> "LIMIT/OFFSET 구문을 사용하세요."
+                }
+            ))
+        }
+
+        // 패턴 5: SELECT 절에서 ROWNUM 사용 (행 번호 할당)
+        val selectRownumPattern = Regex(
+            "SELECT\\s+(.*)\\bROWNUM\\b",
+            RegexOption.IGNORE_CASE
+        )
+        if (selectRownumPattern.containsMatchIn(result) && !result.uppercase().contains("WHERE ROWNUM")) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "SELECT 절의 ROWNUM은 ROW_NUMBER() OVER()로 변환해야 합니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "ROW_NUMBER() OVER(ORDER BY column) AS rn 형식을 사용하세요."
+            ))
+
+            // 간단한 경우 자동 변환 시도
+            result = result.replace(Regex("\\bROWNUM\\b(?!\\s*<=?|\\s*=)", RegexOption.IGNORE_CASE), "ROW_NUMBER() OVER() AS rn")
+            if (result.contains("ROW_NUMBER()")) {
+                appliedRules.add("SELECT ROWNUM → ROW_NUMBER() OVER() 변환")
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle 함수를 타겟 방언 함수로 변환
+     */
+    private fun convertOracleFunctionsInQuery(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        when (targetDialect) {
+            DialectType.MYSQL -> {
+                result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
+                result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "IFNULL(")
+                result = result.replace(Regex("\\bTO_CHAR\\s*\\(", RegexOption.IGNORE_CASE), "DATE_FORMAT(")
+                result = result.replace(Regex("\\bTO_DATE\\s*\\(", RegexOption.IGNORE_CASE), "STR_TO_DATE(")
+                result = result.replace(Regex("\\bLISTAGG\\s*\\(", RegexOption.IGNORE_CASE), "GROUP_CONCAT(")
+                result = result.replace(Regex("\\bSYS_GUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "UUID()")
+                result = result.replace(Regex("\\bDBMS_RANDOM\\.VALUE\\b", RegexOption.IGNORE_CASE), "RAND()")
+
+                // SUBSTR → SUBSTRING (MySQL도 SUBSTR 지원하지만 표준화)
+                // INSTR 유지 (MySQL도 지원)
+
+                appliedRules.add("Oracle 함수 → MySQL 함수 변환")
+            }
+            DialectType.POSTGRESQL -> {
+                result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+                // TO_CHAR는 PostgreSQL도 지원
+                result = result.replace(Regex("\\bTO_DATE\\s*\\(", RegexOption.IGNORE_CASE), "TO_TIMESTAMP(")
+                result = result.replace(Regex("\\bLISTAGG\\s*\\(", RegexOption.IGNORE_CASE), "STRING_AGG(")
+                result = result.replace(Regex("\\bSYS_GUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "gen_random_uuid()")
+                result = result.replace(Regex("\\bDBMS_RANDOM\\.VALUE\\b", RegexOption.IGNORE_CASE), "RANDOM()")
+
+                // INSTR → POSITION 또는 STRPOS
+                result = result.replace(Regex("\\bINSTR\\s*\\(([^,]+),\\s*([^)]+)\\)", RegexOption.IGNORE_CASE)) { matchResult ->
+                    val str = matchResult.groupValues[1].trim()
+                    val substr = matchResult.groupValues[2].trim()
+                    "POSITION($substr IN $str)"
+                }
+
+                appliedRules.add("Oracle 함수 → PostgreSQL 함수 변환")
+            }
+            else -> { }
+        }
+
+        return result
+    }
+
+    /**
+     * 함수의 인자를 추출 (괄호 중첩 처리)
+     */
+    private fun extractFunctionArguments(sql: String, openParenIndex: Int): List<String> {
+        val args = mutableListOf<String>()
+        var depth = 0
+        var currentArg = StringBuilder()
+        var inString = false
+        var stringChar = ' '
+
+        for (i in openParenIndex until sql.length) {
+            val c = sql[i]
+
+            // 문자열 리터럴 처리
+            if ((c == '\'' || c == '"') && (i == 0 || sql[i - 1] != '\\')) {
+                if (!inString) {
+                    inString = true
+                    stringChar = c
+                } else if (c == stringChar) {
+                    inString = false
+                }
+            }
+
+            if (!inString) {
+                when (c) {
+                    '(' -> {
+                        depth++
+                        if (depth > 1) currentArg.append(c)
+                    }
+                    ')' -> {
+                        depth--
+                        if (depth == 0) {
+                            if (currentArg.isNotBlank()) {
+                                args.add(currentArg.toString().trim())
+                            }
+                            return args
+                        }
+                        currentArg.append(c)
+                    }
+                    ',' -> {
+                        if (depth == 1) {
+                            args.add(currentArg.toString().trim())
+                            currentArg = StringBuilder()
+                        } else {
+                            currentArg.append(c)
+                        }
+                    }
+                    else -> {
+                        if (depth >= 1) currentArg.append(c)
+                    }
+                }
+            } else {
+                if (depth >= 1) currentArg.append(c)
+            }
+        }
+
+        return args
+    }
+
+    /**
+     * 매칭되는 닫는 괄호 위치 찾기
+     */
+    private fun findMatchingParenthesis(sql: String, openParenIndex: Int): Int {
+        var depth = 0
+        var inString = false
+        var stringChar = ' '
+
+        for (i in openParenIndex until sql.length) {
+            val c = sql[i]
+
+            // 문자열 리터럴 처리
+            if ((c == '\'' || c == '"') && (i == 0 || sql[i - 1] != '\\')) {
+                if (!inString) {
+                    inString = true
+                    stringChar = c
+                } else if (c == stringChar) {
+                    inString = false
+                }
+            }
+
+            if (!inString) {
+                when (c) {
+                    '(' -> depth++
+                    ')' -> {
+                        depth--
+                        if (depth == 0) return i
+                    }
+                }
+            }
+        }
+
+        return -1
+    }
+
+    /**
+     * 재귀 CTE (WITH RECURSIVE) 변환
+     * Oracle 12c+에서는 WITH RECURSIVE 지원, 이전 버전에서는 CONNECT BY 사용
+     */
+    fun convertRecursiveCteFromString(
+        cteSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = cteSql
+
+        when (targetDialect) {
+            DialectType.MYSQL -> {
+                // MySQL 8.0+에서 WITH RECURSIVE 지원
+                // Oracle WITH → MySQL WITH RECURSIVE
+                if (!result.uppercase().contains("WITH RECURSIVE")) {
+                    result = result.replaceFirst(Regex("\\bWITH\\b", RegexOption.IGNORE_CASE), "WITH RECURSIVE")
+                    appliedRules.add("WITH → WITH RECURSIVE 변환 (MySQL 8.0+)")
+                }
+
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "MySQL 8.0 이상에서만 WITH RECURSIVE를 지원합니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "MySQL 버전을 확인하세요. 5.7 이하에서는 저장 프로시저를 사용해야 합니다."
+                ))
+
+                // 인용 문자 변환
+                result = result.replace("\"", "`")
+            }
+            DialectType.POSTGRESQL -> {
+                // PostgreSQL은 WITH RECURSIVE 완전 지원
+                if (!result.uppercase().contains("WITH RECURSIVE")) {
+                    result = result.replaceFirst(Regex("\\bWITH\\b", RegexOption.IGNORE_CASE), "WITH RECURSIVE")
+                    appliedRules.add("WITH → WITH RECURSIVE 변환")
+                }
+            }
+            DialectType.TIBERO -> {
+                // Tibero는 Oracle 호환
+                appliedRules.add("Oracle 구문 유지 (Tibero 호환)")
+            }
+            else -> { }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle CONNECT BY 계층형 쿼리를 WITH RECURSIVE로 변환
+     */
+    fun convertConnectByToRecursiveCte(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val upperSql = sql.uppercase()
+
+        // CONNECT BY 패턴 확인
+        if (!upperSql.contains("CONNECT BY")) {
+            return sql
+        }
+
+        warnings.add(createWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "Oracle CONNECT BY 계층형 쿼리는 WITH RECURSIVE로 수동 변환이 필요합니다.",
+            severity = WarningSeverity.WARNING,
+            suggestion = """
+                WITH RECURSIVE cte AS (
+                    -- 앵커: START WITH 조건에 해당하는 행 선택
+                    SELECT ... FROM table WHERE start_condition
+                    UNION ALL
+                    -- 재귀: CONNECT BY 조건에 따라 하위 행 선택
+                    SELECT ... FROM table t JOIN cte c ON t.parent = c.id
+                )
+                SELECT * FROM cte;
+            """.trimIndent()
+        ))
+
+        // START WITH 추출
+        val startWithMatch = Regex("START\\s+WITH\\s+(.+?)(?=CONNECT|ORDER|$)", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(sql)
+        val startWithCondition = startWithMatch?.groupValues?.get(1)?.trim()
+
+        // CONNECT BY 추출
+        val connectByMatch = Regex("CONNECT\\s+BY\\s+(?:NOCYCLE\\s+)?(?:PRIOR\\s+)?(.+?)(?=ORDER|START|$)", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(sql)
+        val connectByCondition = connectByMatch?.groupValues?.get(1)?.trim()
+
+        if (startWithCondition != null && connectByCondition != null) {
+            appliedRules.add("CONNECT BY 계층형 쿼리 감지 (수동 변환 필요)")
+
+            // 변환 힌트 제공
+            val hint = """
+-- 원본 Oracle CONNECT BY 쿼리:
+-- START WITH: $startWithCondition
+-- CONNECT BY: $connectByCondition
+
+-- 변환된 WITH RECURSIVE 구조 (수동 조정 필요):
+-- WITH RECURSIVE hierarchy AS (
+--     SELECT *, 1 as level FROM table WHERE $startWithCondition
+--     UNION ALL
+--     SELECT t.*, h.level + 1 FROM table t JOIN hierarchy h ON $connectByCondition
+-- )
+-- SELECT * FROM hierarchy;
+
+$sql
+            """.trimIndent()
+
+            return hint
+        }
+
+        return sql
+    }
 }

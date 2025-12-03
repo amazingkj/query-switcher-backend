@@ -580,3 +580,291 @@ data class TriggerInfo(
         return sb.toString()
     }
 }
+
+/**
+ * STORED PROCEDURE 파라미터 정보
+ */
+data class ProcedureParameter(
+    val name: String,
+    val mode: ParameterMode,        // IN, OUT, INOUT
+    val dataType: String,
+    val defaultValue: String? = null
+) {
+    enum class ParameterMode { IN, OUT, INOUT }
+
+    fun toOracle(): String {
+        val modeStr = when (mode) {
+            ParameterMode.IN -> "IN"
+            ParameterMode.OUT -> "OUT"
+            ParameterMode.INOUT -> "IN OUT"
+        }
+        val defaultStr = defaultValue?.let { " DEFAULT $it" } ?: ""
+        return "\"$name\" $modeStr $dataType$defaultStr"
+    }
+
+    fun toPostgreSql(): String {
+        val modeStr = mode.name
+        val defaultStr = defaultValue?.let { " DEFAULT $it" } ?: ""
+        return "$modeStr \"$name\" $dataType$defaultStr"
+    }
+
+    fun toMySql(): String {
+        val modeStr = mode.name
+        val defaultStr = defaultValue?.let { " DEFAULT $it" } ?: ""
+        return "$modeStr `$name` $dataType$defaultStr"
+    }
+}
+
+/**
+ * STORED PROCEDURE 정보
+ */
+data class ProcedureInfo(
+    val name: String,
+    val parameters: List<ProcedureParameter>,
+    val body: String,
+    val returnType: String? = null,     // FUNCTION인 경우 반환 타입
+    val isFunction: Boolean = false,
+    val language: String = "SQL",       // SQL, PLPGSQL 등
+    val characteristics: List<String> = emptyList()  // DETERMINISTIC, NO SQL 등
+) {
+    /**
+     * Oracle PROCEDURE/FUNCTION 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val sb = StringBuilder()
+        val objectType = if (isFunction) "FUNCTION" else "PROCEDURE"
+
+        sb.append("CREATE OR REPLACE $objectType \"$schemaOwner\".\"$name\"")
+
+        if (parameters.isNotEmpty()) {
+            sb.appendLine(" (")
+            sb.append(parameters.joinToString(",\n    ") { "    ${it.toOracle()}" })
+            sb.appendLine()
+            sb.append(")")
+        }
+
+        if (isFunction && returnType != null) {
+            sb.appendLine()
+            sb.append("RETURN $returnType")
+        }
+
+        sb.appendLine()
+        sb.appendLine("IS")
+        sb.appendLine("BEGIN")
+        sb.append(body)
+        sb.appendLine()
+        sb.append("END;")
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL PROCEDURE/FUNCTION 생성
+     */
+    fun toPostgreSql(): String {
+        val sb = StringBuilder()
+        val objectType = if (isFunction) "FUNCTION" else "PROCEDURE"
+
+        sb.append("CREATE OR REPLACE $objectType \"$name\"(")
+
+        if (parameters.isNotEmpty()) {
+            sb.appendLine()
+            sb.append(parameters.joinToString(",\n    ") { "    ${it.toPostgreSql()}" })
+            sb.appendLine()
+        }
+
+        sb.append(")")
+
+        if (isFunction && returnType != null) {
+            sb.appendLine()
+            sb.append("RETURNS $returnType")
+        }
+
+        sb.appendLine()
+        sb.appendLine("LANGUAGE plpgsql")
+        sb.appendLine("AS \$\$")
+        sb.appendLine("BEGIN")
+        sb.append(body)
+        sb.appendLine()
+        sb.appendLine("END;")
+        sb.append("\$\$;")
+
+        return sb.toString()
+    }
+
+    /**
+     * MySQL PROCEDURE/FUNCTION 생성
+     */
+    fun toMySql(): String {
+        val sb = StringBuilder()
+        val objectType = if (isFunction) "FUNCTION" else "PROCEDURE"
+
+        sb.append("CREATE $objectType `$name`(")
+
+        if (parameters.isNotEmpty()) {
+            sb.append(parameters.joinToString(", ") { it.toMySql() })
+        }
+
+        sb.append(")")
+
+        if (isFunction && returnType != null) {
+            sb.appendLine()
+            sb.append("RETURNS $returnType")
+        }
+
+        sb.appendLine()
+        sb.appendLine("BEGIN")
+        sb.append(body)
+        sb.appendLine()
+        sb.append("END")
+
+        return sb.toString()
+    }
+}
+
+/**
+ * SEQUENCE 정보
+ */
+data class SequenceInfo(
+    val name: String,
+    val startWith: Long = 1,
+    val incrementBy: Long = 1,
+    val minValue: Long? = null,
+    val maxValue: Long? = null,
+    val cache: Int = 20,
+    val cycle: Boolean = false
+) {
+    /**
+     * Oracle SEQUENCE 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val sb = StringBuilder()
+        sb.append("CREATE SEQUENCE \"$schemaOwner\".\"$name\"")
+        sb.appendLine()
+        sb.append("    START WITH $startWith")
+        sb.appendLine()
+        sb.append("    INCREMENT BY $incrementBy")
+        minValue?.let { sb.appendLine(); sb.append("    MINVALUE $it") }
+        maxValue?.let { sb.appendLine(); sb.append("    MAXVALUE $it") }
+        if (cache > 1) {
+            sb.appendLine()
+            sb.append("    CACHE $cache")
+        }
+        if (cycle) {
+            sb.appendLine()
+            sb.append("    CYCLE")
+        }
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL SEQUENCE 생성
+     */
+    fun toPostgreSql(): String {
+        val sb = StringBuilder()
+        sb.append("CREATE SEQUENCE \"$name\"")
+        sb.appendLine()
+        sb.append("    START WITH $startWith")
+        sb.appendLine()
+        sb.append("    INCREMENT BY $incrementBy")
+        minValue?.let { sb.appendLine(); sb.append("    MINVALUE $it") }
+        maxValue?.let { sb.appendLine(); sb.append("    MAXVALUE $it") }
+        if (cache > 1) {
+            sb.appendLine()
+            sb.append("    CACHE $cache")
+        }
+        if (cycle) {
+            sb.appendLine()
+            sb.append("    CYCLE")
+        }
+        return sb.toString()
+    }
+
+    /**
+     * MySQL용 AUTO_INCREMENT 시뮬레이션 테이블 생성
+     * MySQL 8.0 이전에서는 SEQUENCE를 직접 지원하지 않음
+     */
+    fun toMySqlSimulation(): String {
+        return """
+-- MySQL은 SEQUENCE를 직접 지원하지 않습니다.
+-- AUTO_INCREMENT 컬럼을 사용하거나 아래 시뮬레이션 테이블을 사용하세요.
+CREATE TABLE `${name}_seq` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY
+) ENGINE=InnoDB AUTO_INCREMENT=$startWith;
+
+-- 다음 값 가져오기: INSERT INTO `${name}_seq` VALUES (NULL); SELECT LAST_INSERT_ID();
+        """.trimIndent()
+    }
+}
+
+/**
+ * 재귀 CTE (WITH RECURSIVE) 정보
+ */
+data class RecursiveCteInfo(
+    val cteName: String,
+    val columns: List<String>,
+    val anchorQuery: String,        // 비재귀(앵커) 부분
+    val recursiveQuery: String,     // 재귀 부분
+    val mainQuery: String           // 최종 SELECT
+) {
+    /**
+     * Oracle 계층형 쿼리로 변환 (CONNECT BY 사용)
+     * 주의: 모든 재귀 CTE가 CONNECT BY로 변환 가능하지는 않음
+     */
+    fun toOracleConnectBy(warnings: MutableList<ConversionWarning>): String {
+        // Oracle 12c+ 에서는 WITH RECURSIVE도 지원하므로 그대로 사용
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "Oracle 12c 이상에서는 재귀 CTE를 지원합니다. 이전 버전에서는 CONNECT BY를 사용해야 합니다.",
+            severity = WarningSeverity.INFO,
+            suggestion = "Oracle 버전을 확인하고 적절한 구문을 선택하세요."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("WITH \"$cteName\" (${columns.joinToString(", ") { "\"$it\"" }}) AS (")
+        sb.appendLine("    $anchorQuery")
+        sb.appendLine("    UNION ALL")
+        sb.appendLine("    $recursiveQuery")
+        sb.appendLine(")")
+        sb.append(mainQuery)
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL WITH RECURSIVE 생성
+     */
+    fun toPostgreSql(): String {
+        val sb = StringBuilder()
+        sb.appendLine("WITH RECURSIVE \"$cteName\" (${columns.joinToString(", ") { "\"$it\"" }}) AS (")
+        sb.appendLine("    $anchorQuery")
+        sb.appendLine("    UNION ALL")
+        sb.appendLine("    $recursiveQuery")
+        sb.appendLine(")")
+        sb.append(mainQuery)
+
+        return sb.toString()
+    }
+
+    /**
+     * MySQL WITH RECURSIVE 생성 (MySQL 8.0+)
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "MySQL 8.0 이상에서만 WITH RECURSIVE를 지원합니다.",
+            severity = WarningSeverity.WARNING,
+            suggestion = "MySQL 버전을 확인하세요. 5.7 이하에서는 저장 프로시저나 임시 테이블을 사용해야 합니다."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("WITH RECURSIVE `$cteName` (${columns.joinToString(", ") { "`$it`" }}) AS (")
+        sb.appendLine("    $anchorQuery")
+        sb.appendLine("    UNION ALL")
+        sb.appendLine("    $recursiveQuery")
+        sb.appendLine(")")
+        sb.append(mainQuery)
+
+        return sb.toString()
+    }
+}

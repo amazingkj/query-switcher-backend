@@ -1755,4 +1755,502 @@ class MySqlDialect : AbstractDatabaseDialect() {
 
         return result
     }
+
+    /**
+     * MySQL CREATE PROCEDURE를 다른 방언으로 변환
+     */
+    fun convertCreateProcedureFromString(
+        procedureSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+
+        // 프로시저 정보 추출
+        val procedureInfo = extractProcedureInfo(procedureSql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                convertProcedureToOracle(procedureInfo, schemaOwner, warnings, appliedRules)
+            }
+            DialectType.POSTGRESQL -> {
+                convertProcedureToPostgreSql(procedureInfo, warnings, appliedRules)
+            }
+            else -> procedureSql
+        }
+    }
+
+    /**
+     * MySQL PROCEDURE/FUNCTION 문에서 정보 추출
+     */
+    private fun extractProcedureInfo(procedureSql: String): ProcedureInfo {
+        val upperSql = procedureSql.uppercase()
+        val isFunction = upperSql.contains("CREATE FUNCTION") || upperSql.contains("CREATE DEFINER") && upperSql.contains(" FUNCTION ")
+
+        // 프로시저/함수 이름 추출
+        val nameMatch = Regex(
+            "CREATE\\s+(?:DEFINER\\s*=\\s*[^\\s]+\\s+)?(?:PROCEDURE|FUNCTION)\\s+[`\"]?(\\w+)[`\"]?",
+            RegexOption.IGNORE_CASE
+        ).find(procedureSql)
+        val name = nameMatch?.groupValues?.get(1) ?: "UNNAMED_PROCEDURE"
+
+        // 파라미터 추출
+        val paramsMatch = Regex(
+            "(?:PROCEDURE|FUNCTION)\\s+[`\"]?\\w+[`\"]?\\s*\\(([^)]*)\\)",
+            RegexOption.IGNORE_CASE
+        ).find(procedureSql)
+        val paramsStr = paramsMatch?.groupValues?.get(1) ?: ""
+        val parameters = parseParameters(paramsStr)
+
+        // 반환 타입 추출 (FUNCTION인 경우)
+        var returnType: String? = null
+        if (isFunction) {
+            val returnMatch = Regex(
+                "RETURNS\\s+(\\w+(?:\\([^)]+\\))?)",
+                RegexOption.IGNORE_CASE
+            ).find(procedureSql)
+            returnType = returnMatch?.groupValues?.get(1)
+        }
+
+        // 본문 추출 (BEGIN...END 사이)
+        val bodyMatch = Regex(
+            "BEGIN\\s+(.+?)\\s+END",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).find(procedureSql)
+        val body = bodyMatch?.groupValues?.get(1)?.trim() ?: ""
+
+        // 특성 추출 (DETERMINISTIC, NO SQL 등)
+        val characteristics = mutableListOf<String>()
+        if (upperSql.contains("DETERMINISTIC")) characteristics.add("DETERMINISTIC")
+        if (upperSql.contains("NO SQL")) characteristics.add("NO SQL")
+        if (upperSql.contains("READS SQL DATA")) characteristics.add("READS SQL DATA")
+        if (upperSql.contains("MODIFIES SQL DATA")) characteristics.add("MODIFIES SQL DATA")
+
+        return ProcedureInfo(
+            name = name,
+            parameters = parameters,
+            body = body,
+            returnType = returnType,
+            isFunction = isFunction,
+            characteristics = characteristics
+        )
+    }
+
+    /**
+     * 파라미터 문자열 파싱
+     */
+    private fun parseParameters(paramsStr: String): List<ProcedureParameter> {
+        if (paramsStr.isBlank()) return emptyList()
+
+        val params = mutableListOf<ProcedureParameter>()
+        val paramParts = paramsStr.split(",").map { it.trim() }
+
+        for (part in paramParts) {
+            if (part.isBlank()) continue
+
+            val tokens = part.split(Regex("\\s+"))
+            if (tokens.isEmpty()) continue
+
+            var mode = ProcedureParameter.ParameterMode.IN
+            var nameIndex = 0
+
+            // 모드 확인 (IN, OUT, INOUT)
+            when (tokens[0].uppercase()) {
+                "IN" -> { mode = ProcedureParameter.ParameterMode.IN; nameIndex = 1 }
+                "OUT" -> { mode = ProcedureParameter.ParameterMode.OUT; nameIndex = 1 }
+                "INOUT" -> { mode = ProcedureParameter.ParameterMode.INOUT; nameIndex = 1 }
+            }
+
+            if (nameIndex >= tokens.size) continue
+
+            val paramName = tokens[nameIndex].trim('`', '"')
+            val dataType = if (nameIndex + 1 < tokens.size) {
+                tokens.drop(nameIndex + 1).joinToString(" ")
+            } else {
+                "VARCHAR(255)"
+            }
+
+            params.add(ProcedureParameter(
+                name = paramName,
+                mode = mode,
+                dataType = dataType
+            ))
+        }
+
+        return params
+    }
+
+    /**
+     * MySQL PROCEDURE를 Oracle PL/SQL로 변환
+     */
+    private fun convertProcedureToOracle(
+        procedureInfo: ProcedureInfo,
+        schemaOwner: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+        val objectType = if (procedureInfo.isFunction) "FUNCTION" else "PROCEDURE"
+
+        result.append("CREATE OR REPLACE $objectType \"$schemaOwner\".\"${procedureInfo.name}\"")
+
+        // 파라미터
+        if (procedureInfo.parameters.isNotEmpty()) {
+            result.appendLine(" (")
+            val oracleParams = procedureInfo.parameters.map { param ->
+                val oracleType = convertMySqlTypeToOracleType(param.dataType)
+                val modeStr = when (param.mode) {
+                    ProcedureParameter.ParameterMode.IN -> "IN"
+                    ProcedureParameter.ParameterMode.OUT -> "OUT"
+                    ProcedureParameter.ParameterMode.INOUT -> "IN OUT"
+                }
+                "    \"${param.name}\" $modeStr $oracleType"
+            }
+            result.append(oracleParams.joinToString(",\n"))
+            result.appendLine()
+            result.append(")")
+        }
+
+        // 반환 타입 (FUNCTION인 경우)
+        if (procedureInfo.isFunction && procedureInfo.returnType != null) {
+            result.appendLine()
+            val oracleReturnType = convertMySqlTypeToOracleType(procedureInfo.returnType)
+            result.append("RETURN $oracleReturnType")
+        }
+
+        result.appendLine()
+        result.appendLine("IS")
+
+        // 변수 선언부 추출 (DECLARE ... 부분)
+        val bodyConverted = convertProcedureBodyToOracle(procedureInfo.body, warnings, appliedRules)
+
+        result.appendLine("BEGIN")
+        result.appendLine("    $bodyConverted")
+        result.append("END;")
+
+        appliedRules.add("CREATE ${objectType} MySQL → Oracle 형식으로 변환")
+        appliedRules.add("DEFINER 옵션 제거")
+        appliedRules.add("파라미터 타입 Oracle 형식으로 변환")
+
+        return result.toString()
+    }
+
+    /**
+     * MySQL PROCEDURE를 PostgreSQL PL/pgSQL로 변환
+     */
+    private fun convertProcedureToPostgreSql(
+        procedureInfo: ProcedureInfo,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+        val objectType = if (procedureInfo.isFunction) "FUNCTION" else "PROCEDURE"
+
+        result.append("CREATE OR REPLACE $objectType \"${procedureInfo.name}\"(")
+
+        // 파라미터
+        if (procedureInfo.parameters.isNotEmpty()) {
+            result.appendLine()
+            val pgParams = procedureInfo.parameters.map { param ->
+                val pgType = convertMySqlTypeToPostgreSqlType(param.dataType)
+                val modeStr = param.mode.name
+                "    $modeStr \"${param.name}\" $pgType"
+            }
+            result.append(pgParams.joinToString(",\n"))
+            result.appendLine()
+        }
+
+        result.append(")")
+
+        // 반환 타입 (FUNCTION인 경우)
+        if (procedureInfo.isFunction && procedureInfo.returnType != null) {
+            result.appendLine()
+            val pgReturnType = convertMySqlTypeToPostgreSqlType(procedureInfo.returnType)
+            result.append("RETURNS $pgReturnType")
+        }
+
+        result.appendLine()
+        result.appendLine("LANGUAGE plpgsql")
+        result.appendLine("AS \$\$")
+
+        // DECLARE 블록이 필요한 경우
+        val (declares, bodyConverted) = convertProcedureBodyToPostgreSql(procedureInfo.body, warnings, appliedRules)
+        if (declares.isNotEmpty()) {
+            result.appendLine("DECLARE")
+            result.appendLine("    $declares")
+        }
+
+        result.appendLine("BEGIN")
+        result.appendLine("    $bodyConverted")
+        result.appendLine("END;")
+        result.append("\$\$;")
+
+        appliedRules.add("CREATE ${objectType} MySQL → PostgreSQL 형식으로 변환")
+        appliedRules.add("DEFINER 옵션 제거")
+        appliedRules.add("파라미터 타입 PostgreSQL 형식으로 변환")
+
+        return result.toString()
+    }
+
+    /**
+     * MySQL 프로시저 본문을 Oracle PL/SQL로 변환
+     */
+    private fun convertProcedureBodyToOracle(
+        body: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = body
+
+        // 백틱 → 큰따옴표
+        result = result.replace("`", "\"")
+
+        // DECLARE 문 변환 (MySQL은 BEGIN 안에서, Oracle은 IS 이후에)
+        result = result.replace(Regex("\\bDECLARE\\b", RegexOption.IGNORE_CASE), "-- Variables moved to IS section")
+
+        // SET 문 변환 (SET var = value → var := value)
+        result = result.replace(Regex("\\bSET\\s+(@?[a-zA-Z_][a-zA-Z0-9_]*)\\s*=", RegexOption.IGNORE_CASE)) { matchResult ->
+            val varName = matchResult.groupValues[1].removePrefix("@")
+            "$varName :="
+        }
+
+        // 함수 변환
+        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSDATE")
+        result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSTIMESTAMP")
+        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+        result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+        result = result.replace(Regex("\\bCONCAT\\s*\\(", RegexOption.IGNORE_CASE), "CONCAT(")
+        result = result.replace(Regex("\\bUUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYS_GUID()")
+        result = result.replace(Regex("\\bLAST_INSERT_ID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "RETURNING INTO")
+
+        // IF 문 변환 (MySQL IF...THEN...ELSEIF...ELSE...END IF)
+        // Oracle과 구문 동일하므로 대부분 호환됨
+
+        // WHILE 문 변환 (MySQL: WHILE...DO...END WHILE → Oracle: WHILE...LOOP...END LOOP)
+        result = result.replace(Regex("\\bWHILE\\s+(.+?)\\s+DO\\b", RegexOption.IGNORE_CASE)) { matchResult ->
+            "WHILE ${matchResult.groupValues[1]} LOOP"
+        }
+        result = result.replace(Regex("\\bEND\\s+WHILE\\b", RegexOption.IGNORE_CASE), "END LOOP")
+
+        // REPEAT 문 변환 (MySQL: REPEAT...UNTIL...END REPEAT → Oracle: LOOP...EXIT WHEN...END LOOP)
+        if (result.uppercase().contains("REPEAT")) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL REPEAT...UNTIL 구문은 Oracle LOOP...EXIT WHEN으로 수동 변환이 필요합니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "LOOP ... EXIT WHEN condition; END LOOP; 형식으로 변경하세요."
+            ))
+        }
+
+        // LEAVE/ITERATE 변환 (MySQL: LEAVE label → Oracle: EXIT; / ITERATE → CONTINUE)
+        result = result.replace(Regex("\\bLEAVE\\s+(\\w+)\\b", RegexOption.IGNORE_CASE), "EXIT")
+        result = result.replace(Regex("\\bITERATE\\s+(\\w+)\\b", RegexOption.IGNORE_CASE), "CONTINUE")
+
+        // SIGNAL SQLSTATE 변환
+        result = result.replace(
+            Regex("SIGNAL\\s+SQLSTATE\\s+'[^']*'\\s+SET\\s+MESSAGE_TEXT\\s*=\\s*'([^']*)'", RegexOption.IGNORE_CASE)
+        ) { matchResult ->
+            "RAISE_APPLICATION_ERROR(-20001, '${matchResult.groupValues[1]}')"
+        }
+
+        // CURSOR 변환
+        // MySQL: DECLARE cursor_name CURSOR FOR SELECT...
+        // Oracle: CURSOR cursor_name IS SELECT...
+        result = result.replace(
+            Regex("DECLARE\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s+CURSOR\\s+FOR\\s+", RegexOption.IGNORE_CASE)
+        ) { matchResult ->
+            "CURSOR ${matchResult.groupValues[1]} IS "
+        }
+
+        // OPEN, FETCH, CLOSE는 Oracle에서도 동일
+
+        appliedRules.add("프로시저 본문 Oracle PL/SQL 형식으로 변환")
+
+        return result
+    }
+
+    /**
+     * MySQL 프로시저 본문을 PostgreSQL PL/pgSQL로 변환
+     * @return Pair(DECLARE 부분, 본문)
+     */
+    private fun convertProcedureBodyToPostgreSql(
+        body: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): Pair<String, String> {
+        var result = body
+        val declares = StringBuilder()
+
+        // 백틱 → 큰따옴표
+        result = result.replace("`", "\"")
+
+        // DECLARE 문 추출 및 변환
+        val declareMatches = Regex(
+            "DECLARE\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s+(\\w+(?:\\([^)]+\\))?)",
+            RegexOption.IGNORE_CASE
+        ).findAll(result)
+
+        for (match in declareMatches) {
+            val varName = match.groupValues[1]
+            val varType = convertMySqlTypeToPostgreSqlType(match.groupValues[2])
+            declares.appendLine("$varName $varType;")
+        }
+
+        // DECLARE 문 제거 (PostgreSQL은 BEGIN 전에 DECLARE 블록이 있음)
+        result = result.replace(
+            Regex("DECLARE\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s+\\w+(?:\\([^)]+\\))?\\s*;?", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // SET 문 변환 (SET var = value → var := value)
+        result = result.replace(Regex("\\bSET\\s+(@?[a-zA-Z_][a-zA-Z0-9_]*)\\s*=", RegexOption.IGNORE_CASE)) { matchResult ->
+            val varName = matchResult.groupValues[1].removePrefix("@")
+            "$varName :="
+        }
+
+        // 함수 변환
+        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+        result = result.replace(Regex("\\bCONCAT\\s*\\(", RegexOption.IGNORE_CASE), "CONCAT(")
+        result = result.replace(Regex("\\bUUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "gen_random_uuid()")
+
+        // WHILE 문 변환 (MySQL: WHILE...DO...END WHILE → PostgreSQL: WHILE...LOOP...END LOOP)
+        result = result.replace(Regex("\\bWHILE\\s+(.+?)\\s+DO\\b", RegexOption.IGNORE_CASE)) { matchResult ->
+            "WHILE ${matchResult.groupValues[1]} LOOP"
+        }
+        result = result.replace(Regex("\\bEND\\s+WHILE\\b", RegexOption.IGNORE_CASE), "END LOOP")
+
+        // LEAVE/ITERATE 변환
+        result = result.replace(Regex("\\bLEAVE\\s+(\\w+)\\b", RegexOption.IGNORE_CASE), "EXIT")
+        result = result.replace(Regex("\\bITERATE\\s+(\\w+)\\b", RegexOption.IGNORE_CASE), "CONTINUE")
+
+        // SIGNAL SQLSTATE 변환
+        result = result.replace(
+            Regex("SIGNAL\\s+SQLSTATE\\s+'([^']*)'\\s+SET\\s+MESSAGE_TEXT\\s*=\\s*'([^']*)'", RegexOption.IGNORE_CASE)
+        ) { matchResult ->
+            "RAISE EXCEPTION '${matchResult.groupValues[2]}' USING ERRCODE = '${matchResult.groupValues[1]}'"
+        }
+
+        // CURSOR 변환
+        // MySQL: DECLARE cursor_name CURSOR FOR SELECT...
+        // PostgreSQL: cursor_name CURSOR FOR SELECT... (DECLARE 블록에서)
+        val cursorMatches = Regex(
+            "DECLARE\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s+CURSOR\\s+FOR\\s+(.+?)(?:;|$)",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).findAll(body)
+
+        for (match in cursorMatches) {
+            val cursorName = match.groupValues[1]
+            val cursorQuery = match.groupValues[2].trim()
+            declares.appendLine("$cursorName CURSOR FOR $cursorQuery;")
+        }
+
+        result = result.replace(
+            Regex("DECLARE\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s+CURSOR\\s+FOR\\s+.+?;", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+            ""
+        )
+
+        appliedRules.add("프로시저 본문 PostgreSQL PL/pgSQL 형식으로 변환")
+
+        return Pair(declares.toString().trim(), result.trim())
+    }
+
+    /**
+     * MySQL 데이터 타입을 Oracle 타입으로 변환 (프로시저용)
+     */
+    private fun convertMySqlTypeToOracleType(mysqlType: String): String {
+        val upperType = mysqlType.uppercase().trim()
+        return when {
+            upperType.startsWith("VARCHAR") -> upperType.replace("VARCHAR", "VARCHAR2")
+            upperType.startsWith("INT") -> "NUMBER"
+            upperType == "BIGINT" -> "NUMBER(19)"
+            upperType == "SMALLINT" -> "NUMBER(5)"
+            upperType == "TINYINT" -> "NUMBER(3)"
+            upperType.startsWith("DECIMAL") || upperType.startsWith("NUMERIC") -> upperType.replace(Regex("DECIMAL|NUMERIC"), "NUMBER")
+            upperType == "DOUBLE" -> "BINARY_DOUBLE"
+            upperType == "FLOAT" -> "BINARY_FLOAT"
+            upperType == "TEXT" || upperType == "LONGTEXT" -> "CLOB"
+            upperType == "BLOB" || upperType == "LONGBLOB" -> "BLOB"
+            upperType == "DATETIME" || upperType == "TIMESTAMP" -> "TIMESTAMP"
+            upperType == "DATE" -> "DATE"
+            upperType == "BOOLEAN" || upperType == "BOOL" -> "NUMBER(1)"
+            else -> upperType
+        }
+    }
+
+    /**
+     * MySQL 데이터 타입을 PostgreSQL 타입으로 변환 (프로시저용)
+     */
+    private fun convertMySqlTypeToPostgreSqlType(mysqlType: String): String {
+        val upperType = mysqlType.uppercase().trim()
+        return when {
+            upperType.startsWith("INT") -> "INTEGER"
+            upperType == "BIGINT" -> "BIGINT"
+            upperType == "SMALLINT" -> "SMALLINT"
+            upperType == "TINYINT" -> "SMALLINT"
+            upperType.startsWith("VARCHAR") -> upperType
+            upperType.startsWith("DECIMAL") || upperType.startsWith("NUMERIC") -> "NUMERIC${upperType.substringAfter("DECIMAL").substringAfter("NUMERIC")}"
+            upperType == "DOUBLE" -> "DOUBLE PRECISION"
+            upperType == "FLOAT" -> "REAL"
+            upperType == "TEXT" || upperType == "LONGTEXT" -> "TEXT"
+            upperType == "BLOB" || upperType == "LONGBLOB" -> "BYTEA"
+            upperType == "DATETIME" || upperType == "TIMESTAMP" -> "TIMESTAMP"
+            upperType == "DATE" -> "DATE"
+            upperType == "BOOLEAN" || upperType == "BOOL" -> "BOOLEAN"
+            else -> upperType
+        }
+    }
+
+    /**
+     * AUTO_INCREMENT 컬럼에 대한 SEQUENCE + TRIGGER 생성 (Oracle/Tibero용)
+     */
+    fun generateSequenceForAutoIncrement(
+        tableName: String,
+        columnName: String,
+        schemaOwner: String,
+        startWith: Long = 1
+    ): String {
+        val seqName = "SEQ_${tableName}_${columnName}".uppercase()
+        val triggerName = "TRG_${tableName}_${columnName}_BI".uppercase()
+
+        return """
+-- SEQUENCE 생성
+CREATE SEQUENCE "$schemaOwner"."$seqName"
+    START WITH $startWith
+    INCREMENT BY 1
+    NOCACHE
+    NOCYCLE;
+
+-- AUTO_INCREMENT 트리거 생성
+CREATE OR REPLACE TRIGGER "$schemaOwner"."$triggerName"
+BEFORE INSERT ON "$schemaOwner"."$tableName"
+FOR EACH ROW
+BEGIN
+    IF :NEW."$columnName" IS NULL THEN
+        SELECT "$schemaOwner"."$seqName".NEXTVAL INTO :NEW."$columnName" FROM DUAL;
+    END IF;
+END;
+/
+        """.trimIndent()
+    }
+
+    /**
+     * AUTO_INCREMENT 컬럼에 대한 SERIAL 변환 (PostgreSQL용)
+     */
+    fun generateSerialForAutoIncrement(
+        tableName: String,
+        columnName: String
+    ): String {
+        return """
+-- PostgreSQL에서는 SERIAL 또는 GENERATED AS IDENTITY 사용
+-- 컬럼 타입을 SERIAL로 변경하거나:
+-- "$columnName" SERIAL PRIMARY KEY
+
+-- 또는 시퀀스를 직접 생성:
+CREATE SEQUENCE "${tableName}_${columnName}_seq";
+ALTER TABLE "$tableName" ALTER COLUMN "$columnName" SET DEFAULT nextval('${tableName}_${columnName}_seq');
+        """.trimIndent()
+    }
 }
