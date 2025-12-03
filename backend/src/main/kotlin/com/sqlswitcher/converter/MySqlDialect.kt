@@ -2253,4 +2253,476 @@ CREATE SEQUENCE "${tableName}_${columnName}_seq";
 ALTER TABLE "$tableName" ALTER COLUMN "$columnName" SET DEFAULT nextval('${tableName}_${columnName}_seq');
         """.trimIndent()
     }
+
+    // ==================== Phase 2: 고급 DML 변환 ====================
+
+    /**
+     * MySQL INSERT ... ON DUPLICATE KEY UPDATE를 다른 방언으로 변환
+     */
+    fun convertInsertOnDuplicateKey(
+        insertSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+
+        // INSERT ... ON DUPLICATE KEY UPDATE 파싱
+        val mergeInfo = extractInsertOnDuplicateKeyInfo(insertSql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("INSERT ON DUPLICATE KEY UPDATE → Oracle MERGE INTO 변환")
+                mergeInfo.toOracle(schemaOwner)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("INSERT ON DUPLICATE KEY UPDATE → PostgreSQL ON CONFLICT 변환")
+                mergeInfo.toPostgreSql()
+            }
+            else -> insertSql
+        }
+    }
+
+    /**
+     * INSERT ... ON DUPLICATE KEY UPDATE 문에서 정보 추출
+     */
+    private fun extractInsertOnDuplicateKeyInfo(sql: String): MergeStatementInfo {
+        // INSERT INTO table (col1, col2) VALUES (val1, val2) ON DUPLICATE KEY UPDATE col1 = val1
+        val tableMatch = Regex(
+            "INSERT\\s+INTO\\s+[`\"]?(\\w+)[`\"]?\\s*\\(([^)]+)\\)",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+
+        val tableName = tableMatch?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+        val columns = tableMatch?.groupValues?.get(2)?.split(",")?.map { it.trim().trim('`', '"') } ?: emptyList()
+
+        // VALUES 추출
+        val valuesMatch = Regex(
+            "VALUES\\s*\\(([^)]+)\\)",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+        val values = valuesMatch?.groupValues?.get(1)?.split(",")?.map { it.trim() } ?: emptyList()
+
+        // ON DUPLICATE KEY UPDATE 추출
+        val updateMatch = Regex(
+            "ON\\s+DUPLICATE\\s+KEY\\s+UPDATE\\s+(.+)$",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+        val updateClause = updateMatch?.groupValues?.get(1) ?: ""
+
+        // UPDATE SET 파싱
+        val updateMap = mutableMapOf<String, String>()
+        if (updateClause.isNotBlank()) {
+            val setPairs = updateClause.split(",")
+            for (pair in setPairs) {
+                val parts = pair.split("=", limit = 2)
+                if (parts.size == 2) {
+                    val col = parts[0].trim().trim('`', '"')
+                    val value = parts[1].trim()
+                    updateMap[col] = value
+                }
+            }
+        }
+
+        // 매칭 조건 (PRIMARY KEY 또는 UNIQUE 컬럼 기준, 첫 번째 컬럼 사용)
+        val matchCondition = if (columns.isNotEmpty()) "t.${columns[0]} = s.${columns[0]}" else "1 = 1"
+
+        return MergeStatementInfo(
+            targetTable = tableName,
+            sourceTable = null,
+            sourceValues = columns.mapIndexed { idx, col -> "${values.getOrElse(idx) { "NULL" }} AS $col" },
+            matchCondition = matchCondition,
+            matchedUpdate = if (updateMap.isNotEmpty()) updateMap else null,
+            notMatchedInsert = Pair(columns, values)
+        )
+    }
+
+    /**
+     * MySQL UPDATE ... JOIN을 다른 방언으로 변환
+     */
+    fun convertUpdateJoin(
+        updateSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+
+        val updateInfo = extractUpdateJoinInfo(updateSql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("UPDATE JOIN → Oracle 서브쿼리 UPDATE 변환")
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "Oracle에서 UPDATE JOIN은 서브쿼리 방식으로 변환됩니다.",
+                    severity = WarningSeverity.INFO,
+                    suggestion = "MERGE INTO 사용도 고려하세요."
+                ))
+                updateInfo.toOracle(schemaOwner)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("UPDATE JOIN → PostgreSQL UPDATE FROM 변환")
+                updateInfo.toPostgreSql()
+            }
+            else -> updateSql
+        }
+    }
+
+    /**
+     * UPDATE ... JOIN 문에서 정보 추출
+     */
+    private fun extractUpdateJoinInfo(sql: String): UpdateJoinInfo {
+        // UPDATE t1 INNER JOIN t2 ON t1.id = t2.t1_id SET t1.col = t2.col WHERE ...
+        val updateMatch = Regex(
+            "UPDATE\\s+[`\"]?(\\w+)[`\"]?(?:\\s+(?:AS\\s+)?([a-zA-Z]\\w*))?",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+
+        val targetTable = updateMatch?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+        val targetAlias = updateMatch?.groupValues?.get(2)?.takeIf { it.isNotBlank() }
+
+        // JOIN 추출
+        val joinMatch = Regex(
+            "(?:INNER|LEFT|RIGHT)?\\s*JOIN\\s+[`\"]?(\\w+)[`\"]?(?:\\s+(?:AS\\s+)?([a-zA-Z]\\w*))?\\s+ON\\s+(.+?)(?=SET|WHERE|$)",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+
+        val joinTable = joinMatch?.groupValues?.get(1) ?: "UNKNOWN_JOIN_TABLE"
+        val joinAlias = joinMatch?.groupValues?.get(2)?.takeIf { it.isNotBlank() }
+        val joinCondition = joinMatch?.groupValues?.get(3)?.trim() ?: "1 = 1"
+
+        // SET 추출
+        val setMatch = Regex(
+            "SET\\s+(.+?)(?=WHERE|$)",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+        val setClause = setMatch?.groupValues?.get(1)?.trim() ?: ""
+
+        val setMap = mutableMapOf<String, String>()
+        if (setClause.isNotBlank()) {
+            val setPairs = setClause.split(",")
+            for (pair in setPairs) {
+                val parts = pair.split("=", limit = 2)
+                if (parts.size == 2) {
+                    val col = parts[0].trim().trim('`', '"').substringAfter(".")
+                    val value = parts[1].trim()
+                    setMap[col] = value
+                }
+            }
+        }
+
+        // WHERE 추출
+        val whereMatch = Regex(
+            "WHERE\\s+(.+)$",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+        val whereClause = whereMatch?.groupValues?.get(1)?.trim()
+
+        return UpdateJoinInfo(
+            targetTable = targetTable,
+            targetAlias = targetAlias,
+            joinTable = joinTable,
+            joinAlias = joinAlias,
+            joinCondition = joinCondition,
+            setClause = setMap,
+            whereClause = whereClause
+        )
+    }
+
+    /**
+     * MySQL DELETE ... JOIN을 다른 방언으로 변환
+     */
+    fun convertDeleteJoin(
+        deleteSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+
+        val deleteInfo = extractDeleteJoinInfo(deleteSql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("DELETE JOIN → Oracle EXISTS 서브쿼리 변환")
+                deleteInfo.toOracle(schemaOwner)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("DELETE JOIN → PostgreSQL USING 변환")
+                deleteInfo.toPostgreSql()
+            }
+            else -> deleteSql
+        }
+    }
+
+    /**
+     * DELETE ... JOIN 문에서 정보 추출
+     */
+    private fun extractDeleteJoinInfo(sql: String): DeleteJoinInfo {
+        // DELETE t1 FROM t1 INNER JOIN t2 ON t1.id = t2.t1_id WHERE ...
+        val deleteMatch = Regex(
+            "DELETE\\s+([a-zA-Z]\\w*)\\s+FROM\\s+[`\"]?(\\w+)[`\"]?(?:\\s+(?:AS\\s+)?([a-zA-Z]\\w*))?",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+
+        val targetTable = deleteMatch?.groupValues?.get(2) ?: "UNKNOWN_TABLE"
+        val targetAlias = deleteMatch?.groupValues?.get(3)?.takeIf { it.isNotBlank() }
+
+        // JOIN 추출
+        val joinMatch = Regex(
+            "(?:INNER|LEFT|RIGHT)?\\s*JOIN\\s+[`\"]?(\\w+)[`\"]?(?:\\s+(?:AS\\s+)?([a-zA-Z]\\w*))?\\s+ON\\s+(.+?)(?=WHERE|$)",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+
+        val joinTable = joinMatch?.groupValues?.get(1) ?: "UNKNOWN_JOIN_TABLE"
+        val joinAlias = joinMatch?.groupValues?.get(2)?.takeIf { it.isNotBlank() }
+        val joinCondition = joinMatch?.groupValues?.get(3)?.trim() ?: "1 = 1"
+
+        // WHERE 추출
+        val whereMatch = Regex(
+            "WHERE\\s+(.+)$",
+            RegexOption.IGNORE_CASE
+        ).find(sql)
+        val whereClause = whereMatch?.groupValues?.get(1)?.trim()
+
+        return DeleteJoinInfo(
+            targetTable = targetTable,
+            targetAlias = targetAlias,
+            joinTable = joinTable,
+            joinAlias = joinAlias,
+            joinCondition = joinCondition,
+            whereClause = whereClause
+        )
+    }
+
+    /**
+     * SELECT 문 내 윈도우 함수를 다른 방언으로 변환
+     */
+    fun convertWindowFunctions(
+        selectSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = selectSql
+
+        // MySQL 8.0+ 윈도우 함수는 대부분 Oracle/PostgreSQL과 호환
+        // 주요 차이점 처리
+
+        when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                // 백틱 → 큰따옴표
+                result = result.replace("`", "\"")
+
+                // MySQL 특화 함수 변환
+                // CUME_DIST(), PERCENT_RANK() 등은 동일
+
+                appliedRules.add("윈도우 함수 Oracle 형식으로 변환")
+            }
+            DialectType.POSTGRESQL -> {
+                // 백틱 → 큰따옴표
+                result = result.replace("`", "\"")
+
+                appliedRules.add("윈도우 함수 PostgreSQL 형식으로 변환")
+            }
+            else -> { }
+        }
+
+        // NULLS FIRST/LAST 처리
+        if (targetDialect == DialectType.MYSQL) {
+            // MySQL은 NULLS FIRST/LAST를 직접 지원하지 않음
+            if (result.uppercase().contains("NULLS FIRST") || result.uppercase().contains("NULLS LAST")) {
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "MySQL은 NULLS FIRST/LAST를 지원하지 않습니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "CASE WHEN을 사용한 정렬 또는 COALESCE를 사용하세요."
+                ))
+
+                // NULLS FIRST/LAST 제거
+                result = result.replace(Regex("\\s+NULLS\\s+(FIRST|LAST)", RegexOption.IGNORE_CASE), "")
+                appliedRules.add("NULLS FIRST/LAST 제거 (MySQL 미지원)")
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle PIVOT을 MySQL/PostgreSQL CASE WHEN으로 변환
+     * MySQL에서는 PIVOT을 직접 지원하지 않으므로 이 함수는 역방향 변환용
+     */
+    fun convertPivotToCaseWhen(
+        pivotInfo: PivotInfo,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                appliedRules.add("PIVOT → MySQL CASE WHEN 변환")
+                pivotInfo.toMySql()
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("PIVOT → PostgreSQL CASE WHEN 변환")
+                pivotInfo.toPostgreSql()
+            }
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("PIVOT 구문 유지")
+                pivotInfo.toOracle(options?.oracleSchemaOwner ?: "SCHEMA_OWNER")
+            }
+            else -> pivotInfo.toMySql()
+        }
+    }
+
+    /**
+     * Oracle UNPIVOT을 MySQL/PostgreSQL UNION ALL로 변환
+     */
+    fun convertUnpivotToUnionAll(
+        unpivotInfo: UnpivotInfo,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                appliedRules.add("UNPIVOT → MySQL UNION ALL 변환")
+                unpivotInfo.toMySql()
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("UNPIVOT → PostgreSQL UNION ALL 변환")
+                unpivotInfo.toPostgreSql()
+            }
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("UNPIVOT 구문 유지")
+                unpivotInfo.toOracle(options?.oracleSchemaOwner ?: "SCHEMA_OWNER")
+            }
+            else -> unpivotInfo.toMySql()
+        }
+    }
+
+    /**
+     * PIVOT 문자열에서 PivotInfo 추출
+     */
+    fun extractPivotInfo(pivotSql: String): PivotInfo? {
+        // PIVOT (SUM(amount) FOR category IN ('A', 'B', 'C'))
+        val pivotMatch = Regex(
+            "PIVOT\\s*\\(\\s*(\\w+)\\s*\\(([^)]+)\\)\\s+FOR\\s+([^\\s]+)\\s+IN\\s*\\(([^)]+)\\)\\s*\\)",
+            RegexOption.IGNORE_CASE
+        ).find(pivotSql) ?: return null
+
+        val aggregateFunction = pivotMatch.groupValues[1]
+        val aggregateColumn = pivotMatch.groupValues[2].trim().trim('`', '"')
+        val pivotColumn = pivotMatch.groupValues[3].trim().trim('`', '"')
+        val pivotValuesStr = pivotMatch.groupValues[4]
+
+        val pivotValues = pivotValuesStr.split(",").map {
+            it.trim().trim('\'', '"', '`')
+        }
+
+        // FROM 절에서 테이블명 추출
+        val fromMatch = Regex("FROM\\s+[`\"]?(\\w+)[`\"]?", RegexOption.IGNORE_CASE).find(pivotSql)
+        val sourceTable = fromMatch?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        return PivotInfo(
+            sourceTable = sourceTable,
+            aggregateFunction = aggregateFunction,
+            aggregateColumn = aggregateColumn,
+            pivotColumn = pivotColumn,
+            pivotValues = pivotValues,
+            groupByColumns = emptyList()  // 실제 구현에서는 SELECT 절에서 추출 필요
+        )
+    }
+
+    /**
+     * UNPIVOT 문자열에서 UnpivotInfo 추출
+     */
+    fun extractUnpivotInfo(unpivotSql: String): UnpivotInfo? {
+        // UNPIVOT (value FOR name IN (col1, col2, col3))
+        val unpivotMatch = Regex(
+            "UNPIVOT\\s*\\(\\s*([^\\s]+)\\s+FOR\\s+([^\\s]+)\\s+IN\\s*\\(([^)]+)\\)\\s*\\)",
+            RegexOption.IGNORE_CASE
+        ).find(unpivotSql) ?: return null
+
+        val valueColumn = unpivotMatch.groupValues[1].trim().trim('`', '"')
+        val nameColumn = unpivotMatch.groupValues[2].trim().trim('`', '"')
+        val unpivotColumnsStr = unpivotMatch.groupValues[3]
+
+        val unpivotColumns = unpivotColumnsStr.split(",").map {
+            it.trim().trim('\'', '"', '`')
+        }
+
+        // FROM 절에서 테이블명 추출
+        val fromMatch = Regex("FROM\\s+[`\"]?(\\w+)[`\"]?", RegexOption.IGNORE_CASE).find(unpivotSql)
+        val sourceTable = fromMatch?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        return UnpivotInfo(
+            sourceTable = sourceTable,
+            valueColumn = valueColumn,
+            nameColumn = nameColumn,
+            unpivotColumns = unpivotColumns,
+            keepColumns = emptyList()  // 실제 구현에서는 SELECT 절에서 추출 필요
+        )
+    }
+
+    /**
+     * 윈도우 함수 정보 추출
+     */
+    fun extractWindowFunctionInfo(windowFuncStr: String): WindowFunctionInfo? {
+        // ROW_NUMBER() OVER(PARTITION BY col1 ORDER BY col2 DESC)
+        val funcMatch = Regex(
+            "(ROW_NUMBER|RANK|DENSE_RANK|NTILE|LAG|LEAD|FIRST_VALUE|LAST_VALUE|NTH_VALUE|CUME_DIST|PERCENT_RANK)\\s*\\(([^)]*)\\)\\s*OVER\\s*\\(([^)]+)\\)",
+            RegexOption.IGNORE_CASE
+        ).find(windowFuncStr) ?: return null
+
+        val functionName = funcMatch.groupValues[1].uppercase()
+        val arguments = funcMatch.groupValues[2].split(",").map { it.trim() }.filter { it.isNotBlank() }
+        val overClause = funcMatch.groupValues[3]
+
+        // PARTITION BY 추출
+        val partitionMatch = Regex("PARTITION\\s+BY\\s+(.+?)(?=ORDER|$)", RegexOption.IGNORE_CASE).find(overClause)
+        val partitionBy = partitionMatch?.groupValues?.get(1)?.split(",")?.map { it.trim().trim('`', '"') } ?: emptyList()
+
+        // ORDER BY 추출
+        val orderMatch = Regex("ORDER\\s+BY\\s+(.+)", RegexOption.IGNORE_CASE).find(overClause)
+        val orderByStr = orderMatch?.groupValues?.get(1) ?: ""
+
+        val orderByColumns = mutableListOf<WindowFunctionInfo.OrderByColumn>()
+        if (orderByStr.isNotBlank()) {
+            val orderParts = orderByStr.split(",")
+            for (part in orderParts) {
+                val trimmed = part.trim()
+                val colMatch = Regex("([^\\s]+)(?:\\s+(ASC|DESC))?(?:\\s+(NULLS\\s+(?:FIRST|LAST)))?", RegexOption.IGNORE_CASE).find(trimmed)
+                if (colMatch != null) {
+                    val column = colMatch.groupValues[1].trim('`', '"')
+                    val direction = colMatch.groupValues[2].uppercase().ifBlank { "ASC" }
+                    val nullsPosition = colMatch.groupValues[3].takeIf { it.isNotBlank() }
+
+                    orderByColumns.add(WindowFunctionInfo.OrderByColumn(
+                        column = column,
+                        direction = direction,
+                        nullsPosition = nullsPosition
+                    ))
+                }
+            }
+        }
+
+        // AS 별칭 추출
+        val aliasMatch = Regex("\\)\\s+AS\\s+[`\"]?([^`\"\\s,]+)[`\"]?", RegexOption.IGNORE_CASE).find(windowFuncStr)
+        val alias = aliasMatch?.groupValues?.get(1)
+
+        return WindowFunctionInfo(
+            functionName = functionName,
+            arguments = arguments,
+            partitionBy = partitionBy,
+            orderBy = orderByColumns,
+            alias = alias
+        )
+    }
+
+    private val options: ConversionOptions? = null
 }
