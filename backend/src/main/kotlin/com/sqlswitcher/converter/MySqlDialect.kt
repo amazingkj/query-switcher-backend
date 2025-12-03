@@ -14,6 +14,10 @@ import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.statement.create.table.ColumnDefinition
 import net.sf.jsqlparser.statement.create.table.Index
 import net.sf.jsqlparser.statement.create.table.ForeignKeyIndex
+import net.sf.jsqlparser.statement.create.index.CreateIndex
+import net.sf.jsqlparser.statement.drop.Drop
+import net.sf.jsqlparser.statement.alter.Alter
+import net.sf.jsqlparser.statement.create.view.CreateView
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -91,7 +95,49 @@ class MySqlDialect : AbstractDatabaseDialect() {
                     appliedRules = appliedRules
                 )
             }
+            is CreateIndex -> {
+                val convertedSql = convertCreateIndex(statement, targetDialect, warnings, appliedRules, options)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is Drop -> {
+                val convertedSql = convertDrop(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is Alter -> {
+                val convertedSql = convertAlter(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is CreateView -> {
+                val convertedSql = convertCreateView(statement, targetDialect, warnings, appliedRules, options)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
             else -> {
+                // CREATE TRIGGER 문은 JSQLParser에서 직접 지원하지 않으므로 문자열로 처리
+                val statementStr = statement.toString().uppercase()
+                if (statementStr.trimStart().startsWith("CREATE") && statementStr.contains("TRIGGER")) {
+                    val convertedSql = convertCreateTriggerFromString(statement.toString(), targetDialect, warnings, appliedRules, options)
+                    return ConversionResult(
+                        convertedSql = convertedSql,
+                        warnings = warnings,
+                        appliedRules = appliedRules
+                    )
+                }
                 // 다른 Statement 타입들은 기본 변환
                 return ConversionResult(
                     convertedSql = statement.toString(),
@@ -477,14 +523,31 @@ class MySqlDialect : AbstractDatabaseDialect() {
             }
         }
 
-        // PRIMARY KEY 및 FOREIGN KEY 정보 추출
+        // PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK 정보 추출
         val foreignKeys = mutableListOf<ForeignKeyInfo>()
+        val uniqueConstraints = mutableListOf<UniqueConstraintInfo>()
+        val checkConstraints = mutableListOf<CheckConstraintInfo>()
 
         createTable.indexes?.forEach { index ->
             val indexStr = index.toString().uppercase()
-            if (index.type?.uppercase() == "PRIMARY KEY" || indexStr.contains("PRIMARY KEY")) {
+            val indexType = index.type?.uppercase() ?: ""
+
+            // PRIMARY KEY 추출
+            if (indexType == "PRIMARY KEY" || indexStr.contains("PRIMARY KEY")) {
                 primaryKeyColumns = index.columnsNames?.map { it.trim('`', '"') }
                 primaryKeyName = "PK_${rawTableName.removePrefix("TB_").removePrefix("T_")}"
+            }
+
+            // UNIQUE 제약조건 추출
+            if (indexType == "UNIQUE" || indexStr.contains("UNIQUE KEY") || indexStr.contains("UNIQUE INDEX")) {
+                val ukColumns = index.columnsNames?.map { it.trim('`', '"') } ?: emptyList()
+                if (ukColumns.isNotEmpty()) {
+                    val ukName = index.name?.trim('`', '"') ?: "UK_${rawTableName}_${ukColumns.first()}"
+                    uniqueConstraints.add(UniqueConstraintInfo(
+                        constraintName = ukName,
+                        columns = ukColumns
+                    ))
+                }
             }
 
             // FOREIGN KEY 추출 (ForeignKeyIndex 타입 체크)
@@ -510,6 +573,19 @@ class MySqlDialect : AbstractDatabaseDialect() {
                         onUpdate = onUpdateAction
                     ))
                 }
+            }
+        }
+
+        // CHECK 제약조건 추출 (MySQL 8.0.16+에서 지원)
+        // JSQLParser가 CHECK를 인덱스로 파싱하지 않으므로 테이블 옵션에서 추출 시도
+        createTable.tableOptionsStrings?.forEach { optStr ->
+            val opt = optStr.toString()
+            val checkMatch = Regex("CONSTRAINT\\s+[`\"]?(\\w+)[`\"]?\\s+CHECK\\s*\\((.+)\\)", RegexOption.IGNORE_CASE).find(opt)
+            if (checkMatch != null) {
+                checkConstraints.add(CheckConstraintInfo(
+                    constraintName = checkMatch.groupValues[1],
+                    expression = checkMatch.groupValues[2]
+                ))
             }
         }
 
@@ -648,7 +724,113 @@ class MySqlDialect : AbstractDatabaseDialect() {
             appliedRules.add("FOREIGN KEY를 별도 ALTER TABLE로 분리")
         }
 
+        // UNIQUE 제약조건 생성
+        if (uniqueConstraints.isNotEmpty()) {
+            result.appendLine()
+
+            uniqueConstraints.forEach { uk ->
+                result.appendLine(uk.toOracleConstraint(schemaOwner, rawTableName, indexspace) + ";")
+            }
+
+            appliedRules.add("UNIQUE 제약조건을 별도 ALTER TABLE로 분리")
+        }
+
+        // CHECK 제약조건 생성
+        if (checkConstraints.isNotEmpty()) {
+            result.appendLine()
+
+            checkConstraints.forEach { ck ->
+                result.appendLine(ck.toOracleConstraint(schemaOwner, rawTableName) + ";")
+            }
+
+            appliedRules.add("CHECK 제약조건을 별도 ALTER TABLE로 분리")
+        }
+
+        // PARTITION 정보 추출 및 변환
+        val partitionInfo = extractPartitionInfo(createTable.toString())
+        if (partitionInfo != null) {
+            result.appendLine()
+            result.appendLine("-- PARTITION 정보 (테이블 생성 시 포함 필요)")
+            result.appendLine("-- " + partitionInfo.toOraclePartition(schemaOwner).replace("\n", "\n-- "))
+            appliedRules.add("PARTITION 구문 Oracle 형식으로 변환")
+
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL PARTITION 구문이 Oracle 형식으로 변환되었습니다.",
+                severity = WarningSeverity.INFO,
+                suggestion = "파티션 정의를 CREATE TABLE 문에 직접 포함하거나, 별도의 ALTER TABLE로 추가하세요."
+            ))
+        }
+
         return result.toString().trim()
+    }
+
+    /**
+     * CREATE TABLE 문에서 PARTITION 정보 추출
+     */
+    private fun extractPartitionInfo(createTableSql: String): PartitionInfo? {
+        val upperSql = createTableSql.uppercase()
+
+        // PARTITION BY 구문 찾기
+        if (!upperSql.contains("PARTITION BY")) {
+            return null
+        }
+
+        // 파티션 타입 추출
+        val partitionType = when {
+            upperSql.contains("PARTITION BY RANGE COLUMNS") -> PartitionType.COLUMNS
+            upperSql.contains("PARTITION BY RANGE") -> PartitionType.RANGE
+            upperSql.contains("PARTITION BY LIST") -> PartitionType.LIST
+            upperSql.contains("PARTITION BY HASH") -> PartitionType.HASH
+            upperSql.contains("PARTITION BY KEY") -> PartitionType.KEY
+            else -> return null
+        }
+
+        // 파티션 컬럼 추출
+        val partitionByMatch = Regex(
+            "PARTITION\\s+BY\\s+(?:RANGE|LIST|HASH|KEY)(?:\\s+COLUMNS)?\\s*\\(([^)]+)\\)",
+            RegexOption.IGNORE_CASE
+        ).find(createTableSql)
+
+        val columns = partitionByMatch?.groupValues?.get(1)
+            ?.split(",")
+            ?.map { it.trim().trim('`', '"') }
+            ?: return null
+
+        // 파티션 정의 추출
+        val partitions = mutableListOf<PartitionDefinition>()
+
+        // PARTITION 정의 패턴 매칭
+        val partitionDefPattern = Regex(
+            "PARTITION\\s+[`\"]?(\\w+)[`\"]?\\s+VALUES\\s+(LESS\\s+THAN\\s*\\([^)]+\\)|LESS\\s+THAN\\s+MAXVALUE|IN\\s*\\([^)]+\\))",
+            RegexOption.IGNORE_CASE
+        )
+
+        partitionDefPattern.findAll(createTableSql).forEach { match ->
+            val partName = match.groupValues[1]
+            val partValues = match.groupValues[2]
+            partitions.add(PartitionDefinition(
+                name = partName,
+                values = partValues
+            ))
+        }
+
+        // HASH/KEY 파티션의 경우 PARTITIONS N 추출
+        if ((partitionType == PartitionType.HASH || partitionType == PartitionType.KEY) && partitions.isEmpty()) {
+            val partitionsCountMatch = Regex("PARTITIONS\\s+(\\d+)", RegexOption.IGNORE_CASE).find(createTableSql)
+            val count = partitionsCountMatch?.groupValues?.get(1)?.toIntOrNull() ?: 4
+            for (i in 0 until count) {
+                partitions.add(PartitionDefinition(name = "p$i", values = ""))
+            }
+        }
+
+        return if (columns.isNotEmpty()) {
+            PartitionInfo(
+                partitionType = partitionType,
+                columns = columns,
+                partitions = partitions
+            )
+        } else null
     }
 
     /**
@@ -699,5 +881,878 @@ class MySqlDialect : AbstractDatabaseDialect() {
             "YEAR" -> "NUMBER(4)"
             else -> baseType
         }
+    }
+
+    /**
+     * MySQL CREATE INDEX를 다른 방언으로 변환
+     * - ASC/DESC 정렬 옵션 지원
+     * - NULLS FIRST/LAST 옵션 지원 (Oracle/PostgreSQL)
+     */
+    private fun convertCreateIndex(
+        createIndex: CreateIndex,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+        val indexspace = options?.oracleIndexspace ?: "INDEXSPACE_NAME"
+
+        val index = createIndex.index
+        val indexName = index?.name?.trim('`', '"') ?: "IDX_UNNAMED"
+        val tableName = createIndex.table?.name?.trim('`', '"') ?: ""
+        val isUnique = createIndex.toString().uppercase().contains("UNIQUE")
+
+        // 인덱스 컬럼과 옵션 추출 (ASC/DESC, NULLS FIRST/LAST)
+        val indexColumns = extractIndexColumnsWithOptions(createIndex.toString())
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                val result = StringBuilder()
+                val columnsFormatted = indexColumns.joinToString(", ") { col ->
+                    val colName = "\"${col.columnName}\""
+                    val sortOrder = if (col.sortOrder == IndexColumnOption.SortOrder.DESC) " DESC" else ""
+                    val nullsPos = when (col.nullsPosition) {
+                        IndexColumnOption.NullsPosition.FIRST -> " NULLS FIRST"
+                        IndexColumnOption.NullsPosition.LAST -> " NULLS LAST"
+                        else -> ""
+                    }
+                    "$colName$sortOrder$nullsPos"
+                }
+
+                if (isUnique) {
+                    result.append("CREATE UNIQUE INDEX \"$schemaOwner\".\"$indexName\" ON \"$schemaOwner\".\"$tableName\" ($columnsFormatted)")
+                } else {
+                    result.append("CREATE INDEX \"$schemaOwner\".\"$indexName\" ON \"$schemaOwner\".\"$tableName\" ($columnsFormatted)")
+                }
+                result.appendLine()
+                result.append("    TABLESPACE \"$indexspace\"")
+
+                appliedRules.add("CREATE INDEX MySQL → Oracle 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+                appliedRules.add("TABLESPACE 지정 추가")
+                if (indexColumns.any { it.sortOrder == IndexColumnOption.SortOrder.DESC }) {
+                    appliedRules.add("DESC 정렬 옵션 유지")
+                }
+                if (indexColumns.any { it.nullsPosition != null }) {
+                    appliedRules.add("NULLS FIRST/LAST 옵션 유지")
+                }
+
+                result.toString()
+            }
+            DialectType.POSTGRESQL -> {
+                val columnsFormatted = indexColumns.joinToString(", ") { col ->
+                    val colName = "\"${col.columnName}\""
+                    val sortOrder = if (col.sortOrder == IndexColumnOption.SortOrder.DESC) " DESC" else ""
+                    val nullsPos = when (col.nullsPosition) {
+                        IndexColumnOption.NullsPosition.FIRST -> " NULLS FIRST"
+                        IndexColumnOption.NullsPosition.LAST -> " NULLS LAST"
+                        else -> ""
+                    }
+                    "$colName$sortOrder$nullsPos"
+                }
+
+                val result = if (isUnique) {
+                    "CREATE UNIQUE INDEX \"$indexName\" ON \"$tableName\" ($columnsFormatted)"
+                } else {
+                    "CREATE INDEX \"$indexName\" ON \"$tableName\" ($columnsFormatted)"
+                }
+
+                appliedRules.add("CREATE INDEX MySQL → PostgreSQL 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+                if (indexColumns.any { it.sortOrder == IndexColumnOption.SortOrder.DESC }) {
+                    appliedRules.add("DESC 정렬 옵션 유지")
+                }
+                if (indexColumns.any { it.nullsPosition != null }) {
+                    appliedRules.add("NULLS FIRST/LAST 옵션 유지")
+                }
+
+                result
+            }
+            DialectType.MYSQL -> {
+                // MySQL 8.0+는 DESC 인덱스 지원, NULLS FIRST/LAST는 미지원
+                val columnsFormatted = indexColumns.joinToString(", ") { col ->
+                    val colName = "`${col.columnName}`"
+                    val sortOrder = if (col.sortOrder == IndexColumnOption.SortOrder.DESC) " DESC" else ""
+                    "$colName$sortOrder"
+                }
+
+                if (indexColumns.any { it.nullsPosition != null }) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "MySQL은 NULLS FIRST/LAST 옵션을 지원하지 않습니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "ORDER BY 절에서 CASE WHEN을 사용하여 NULL 정렬을 처리하세요."
+                    ))
+                }
+
+                val result = if (isUnique) {
+                    "CREATE UNIQUE INDEX `$indexName` ON `$tableName` ($columnsFormatted)"
+                } else {
+                    "CREATE INDEX `$indexName` ON `$tableName` ($columnsFormatted)"
+                }
+
+                appliedRules.add("CREATE INDEX 형식 유지")
+                result
+            }
+        }
+    }
+
+    /**
+     * CREATE INDEX 문에서 컬럼과 옵션(ASC/DESC, NULLS FIRST/LAST) 추출
+     */
+    private fun extractIndexColumnsWithOptions(createIndexSql: String): List<IndexColumnOption> {
+        val columns = mutableListOf<IndexColumnOption>()
+
+        // 괄호 안의 컬럼 목록 추출
+        val columnListMatch = Regex("\\(([^)]+)\\)").find(createIndexSql)
+        if (columnListMatch != null) {
+            val columnList = columnListMatch.groupValues[1]
+            // 각 컬럼 파싱 (쉼표로 분리)
+            columnList.split(",").forEach { colDef ->
+                val trimmed = colDef.trim()
+                // 컬럼명 추출 (백틱/큰따옴표 포함 가능)
+                val colNameMatch = Regex("^[`\"]?([^`\"\\s]+)[`\"]?").find(trimmed)
+                val columnName = colNameMatch?.groupValues?.get(1)?.trim('`', '"') ?: return@forEach
+
+                // ASC/DESC 확인
+                val sortOrder = when {
+                    trimmed.uppercase().contains(" DESC") -> IndexColumnOption.SortOrder.DESC
+                    else -> IndexColumnOption.SortOrder.ASC
+                }
+
+                // NULLS FIRST/LAST 확인
+                val nullsPosition = when {
+                    trimmed.uppercase().contains("NULLS FIRST") -> IndexColumnOption.NullsPosition.FIRST
+                    trimmed.uppercase().contains("NULLS LAST") -> IndexColumnOption.NullsPosition.LAST
+                    else -> null
+                }
+
+                columns.add(IndexColumnOption(
+                    columnName = columnName,
+                    sortOrder = sortOrder,
+                    nullsPosition = nullsPosition
+                ))
+            }
+        }
+
+        return columns
+    }
+
+    /**
+     * MySQL DROP 문을 다른 방언으로 변환
+     */
+    private fun convertDrop(
+        drop: Drop,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val dropType = drop.type?.uppercase() ?: "TABLE"
+        val objectName = drop.name?.name?.trim('`', '"') ?: ""
+        val ifExists = drop.isIfExists
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                // Oracle은 IF EXISTS를 지원하지 않음
+                if (ifExists) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Oracle은 DROP IF EXISTS 구문을 지원하지 않습니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "PL/SQL 블록을 사용하거나 예외 처리를 추가하세요."
+                    ))
+                }
+
+                val result = "DROP $dropType \"$objectName\""
+                appliedRules.add("DROP 문 Oracle 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+
+                if (dropType == "TABLE") {
+                    // Oracle에서는 CASCADE CONSTRAINTS 옵션 안내
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Oracle에서 FK가 있는 테이블 삭제 시 CASCADE CONSTRAINTS가 필요할 수 있습니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "DROP TABLE \"$objectName\" CASCADE CONSTRAINTS 사용을 고려하세요."
+                    ))
+                }
+
+                result
+            }
+            DialectType.POSTGRESQL -> {
+                val ifExistsStr = if (ifExists) "IF EXISTS " else ""
+                val result = "DROP $dropType $ifExistsStr\"$objectName\""
+                appliedRules.add("DROP 문 PostgreSQL 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+                result
+            }
+            else -> drop.toString()
+        }
+    }
+
+    /**
+     * MySQL ALTER TABLE 문을 다른 방언으로 변환
+     */
+    private fun convertAlter(
+        alter: Alter,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val tableName = alter.table?.name?.trim('`', '"') ?: ""
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                val result = StringBuilder()
+                result.append("ALTER TABLE \"$tableName\"")
+
+                // ALTER 표현식들 처리
+                alter.alterExpressions?.forEach { expr ->
+                    val operation = expr.operation?.name?.uppercase() ?: ""
+                    when (operation) {
+                        "ADD" -> {
+                            // colDataTypeList를 통해 컬럼 정보 접근
+                            val columnDataTypes = expr.colDataTypeList
+                            if (!columnDataTypes.isNullOrEmpty()) {
+                                columnDataTypes.forEach { colDef ->
+                                    val columnName = colDef.columnName?.trim('`', '"')
+                                    val colDataType = colDef.colDataType
+                                    val dataType = if (colDataType != null) {
+                                        val typeName = colDataType.dataType?.uppercase() ?: "VARCHAR"
+                                        val typeArgs = colDataType.argumentsStringList
+                                        convertMySqlTypeToOracleWithPrecision(typeName, typeArgs)
+                                    } else {
+                                        "VARCHAR2(255)"
+                                    }
+                                    result.append(" ADD (\"$columnName\" $dataType)")
+                                }
+                            } else {
+                                val columnName = expr.columnName?.trim('`', '"')
+                                if (columnName != null) {
+                                    result.append(" ADD (\"$columnName\" VARCHAR2(255))")
+                                }
+                            }
+                        }
+                        "DROP" -> {
+                            val columnName = expr.columnName?.trim('`', '"')
+                            if (columnName != null) {
+                                result.append(" DROP COLUMN \"$columnName\"")
+                            }
+                        }
+                        "MODIFY" -> {
+                            // colDataTypeList를 통해 컬럼 정보 접근
+                            val columnDataTypes = expr.colDataTypeList
+                            if (!columnDataTypes.isNullOrEmpty()) {
+                                columnDataTypes.forEach { colDef ->
+                                    val columnName = colDef.columnName?.trim('`', '"')
+                                    val colDataType = colDef.colDataType
+                                    val dataType = if (colDataType != null) {
+                                        val typeName = colDataType.dataType?.uppercase() ?: "VARCHAR"
+                                        val typeArgs = colDataType.argumentsStringList
+                                        convertMySqlTypeToOracleWithPrecision(typeName, typeArgs)
+                                    } else {
+                                        "VARCHAR2(255)"
+                                    }
+                                    result.append(" MODIFY (\"$columnName\" $dataType)")
+                                }
+                            } else {
+                                val columnName = expr.columnName?.trim('`', '"')
+                                if (columnName != null) {
+                                    result.append(" MODIFY (\"$columnName\" VARCHAR2(255))")
+                                }
+                            }
+                        }
+                        else -> {
+                            warnings.add(createWarning(
+                                type = WarningType.PARTIAL_SUPPORT,
+                                message = "ALTER TABLE $operation 작업이 완전히 변환되지 않았을 수 있습니다.",
+                                severity = WarningSeverity.WARNING,
+                                suggestion = "수동으로 확인하세요."
+                            ))
+                        }
+                    }
+                }
+
+                appliedRules.add("ALTER TABLE MySQL → Oracle 형식으로 변환")
+                result.toString()
+            }
+            DialectType.POSTGRESQL -> {
+                val result = StringBuilder()
+                result.append("ALTER TABLE \"$tableName\"")
+
+                alter.alterExpressions?.forEach { expr ->
+                    val operation = expr.operation?.name?.uppercase() ?: ""
+                    when (operation) {
+                        "ADD" -> {
+                            // colDataTypeList를 통해 컬럼 정보 접근
+                            val columnDataTypes = expr.colDataTypeList
+                            if (!columnDataTypes.isNullOrEmpty()) {
+                                columnDataTypes.forEach { colDef ->
+                                    val columnName = colDef.columnName?.trim('`', '"')
+                                    val colDataType = colDef.colDataType
+                                    val dataType = if (colDataType != null) {
+                                        val typeName = colDataType.dataType?.uppercase() ?: "VARCHAR"
+                                        convertToPostgreSqlDataType(typeName)
+                                    } else {
+                                        "VARCHAR(255)"
+                                    }
+                                    result.append(" ADD COLUMN \"$columnName\" $dataType")
+                                }
+                            } else {
+                                val columnName = expr.columnName?.trim('`', '"')
+                                if (columnName != null) {
+                                    result.append(" ADD COLUMN \"$columnName\" VARCHAR(255)")
+                                }
+                            }
+                        }
+                        "DROP" -> {
+                            val columnName = expr.columnName?.trim('`', '"')
+                            if (columnName != null) {
+                                result.append(" DROP COLUMN \"$columnName\"")
+                            }
+                        }
+                        "MODIFY" -> {
+                            // PostgreSQL은 ALTER COLUMN 사용
+                            // colDataTypeList를 통해 컬럼 정보 접근
+                            val columnDataTypes = expr.colDataTypeList
+                            if (!columnDataTypes.isNullOrEmpty()) {
+                                columnDataTypes.forEach { colDef ->
+                                    val columnName = colDef.columnName?.trim('`', '"')
+                                    val colDataType = colDef.colDataType
+                                    val dataType = if (colDataType != null) {
+                                        val typeName = colDataType.dataType?.uppercase() ?: "VARCHAR"
+                                        convertToPostgreSqlDataType(typeName)
+                                    } else {
+                                        "VARCHAR(255)"
+                                    }
+                                    result.append(" ALTER COLUMN \"$columnName\" TYPE $dataType")
+                                }
+                            } else {
+                                val columnName = expr.columnName?.trim('`', '"')
+                                if (columnName != null) {
+                                    result.append(" ALTER COLUMN \"$columnName\" TYPE VARCHAR(255)")
+                                }
+                            }
+                        }
+                        else -> {
+                            warnings.add(createWarning(
+                                type = WarningType.PARTIAL_SUPPORT,
+                                message = "ALTER TABLE $operation 작업이 완전히 변환되지 않았을 수 있습니다.",
+                                severity = WarningSeverity.WARNING,
+                                suggestion = "수동으로 확인하세요."
+                            ))
+                        }
+                    }
+                }
+
+                appliedRules.add("ALTER TABLE MySQL → PostgreSQL 형식으로 변환")
+                result.toString()
+            }
+            else -> alter.toString()
+        }
+    }
+
+    /**
+     * MySQL CREATE VIEW를 다른 방언으로 변환
+     * - 백틱(`) → 큰따옴표(") 변환
+     * - 함수 변환 (NOW → SYSDATE 등)
+     * - LIMIT → FETCH FIRST 변환 (Oracle)
+     * - DEFINER, ALGORITHM, SQL SECURITY 등 MySQL 전용 옵션 제거
+     */
+    private fun convertCreateView(
+        createView: CreateView,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+        val viewName = createView.view?.name?.trim('`', '"') ?: ""
+        val isOrReplace = createView.isOrReplace
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                val result = StringBuilder()
+
+                // CREATE OR REPLACE VIEW
+                if (isOrReplace) {
+                    result.append("CREATE OR REPLACE VIEW \"$schemaOwner\".\"$viewName\"")
+                } else {
+                    result.append("CREATE VIEW \"$schemaOwner\".\"$viewName\"")
+                }
+
+                // 컬럼 목록이 있는 경우
+                val columnNames = createView.columnNames
+                if (!columnNames.isNullOrEmpty()) {
+                    val columns = columnNames.map { col -> "\"${col.toString().trim('`', '"')}\"" }
+                    result.append(" (${columns.joinToString(", ")})")
+                }
+
+                result.appendLine(" AS")
+
+                // SELECT 문 변환
+                val selectStatement = createView.select
+                if (selectStatement != null) {
+                    // SELECT 문 내부의 함수, LIMIT 등을 변환
+                    val convertedSelect = convertSelectForView(selectStatement.toString(), targetDialect, warnings, appliedRules)
+                    result.append(convertedSelect)
+                }
+
+                appliedRules.add("CREATE VIEW MySQL → Oracle 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+
+                // MySQL 전용 옵션 경고
+                if (createView.toString().uppercase().contains("DEFINER")) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "MySQL DEFINER 옵션은 Oracle에서 지원되지 않습니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "Oracle에서는 뷰 소유자가 자동으로 DEFINER가 됩니다."
+                    ))
+                    appliedRules.add("DEFINER 옵션 제거")
+                }
+
+                if (createView.toString().uppercase().contains("ALGORITHM")) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "MySQL ALGORITHM 옵션은 Oracle에서 지원되지 않습니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "Oracle은 자동으로 최적의 알고리즘을 선택합니다."
+                    ))
+                    appliedRules.add("ALGORITHM 옵션 제거")
+                }
+
+                result.toString()
+            }
+            DialectType.POSTGRESQL -> {
+                val result = StringBuilder()
+
+                // CREATE OR REPLACE VIEW
+                if (isOrReplace) {
+                    result.append("CREATE OR REPLACE VIEW \"$viewName\"")
+                } else {
+                    result.append("CREATE VIEW \"$viewName\"")
+                }
+
+                // 컬럼 목록이 있는 경우
+                val columnNames = createView.columnNames
+                if (!columnNames.isNullOrEmpty()) {
+                    val columns = columnNames.map { col -> "\"${col.toString().trim('`', '"')}\"" }
+                    result.append(" (${columns.joinToString(", ")})")
+                }
+
+                result.appendLine(" AS")
+
+                // SELECT 문 변환
+                val selectStatement = createView.select
+                if (selectStatement != null) {
+                    val convertedSelect = convertSelectForView(selectStatement.toString(), targetDialect, warnings, appliedRules)
+                    result.append(convertedSelect)
+                }
+
+                appliedRules.add("CREATE VIEW MySQL → PostgreSQL 형식으로 변환")
+                appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+
+                // MySQL 전용 옵션 경고
+                if (createView.toString().uppercase().contains("DEFINER")) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "MySQL DEFINER 옵션은 PostgreSQL에서 지원되지 않습니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "PostgreSQL에서는 뷰 소유자가 자동으로 설정됩니다."
+                    ))
+                    appliedRules.add("DEFINER 옵션 제거")
+                }
+
+                result.toString()
+            }
+            else -> createView.toString()
+        }
+    }
+
+    /**
+     * VIEW 내부 SELECT 문 변환
+     * - 백틱 → 큰따옴표
+     * - 함수 변환
+     * - LIMIT → FETCH FIRST (Oracle)
+     */
+    private fun convertSelectForView(
+        selectSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = selectSql
+
+        // 백틱 → 큰따옴표 변환
+        result = result.replace("`", "\"")
+
+        when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                // 함수 변환
+                result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSDATE")
+                result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+                result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+                result = result.replace(Regex("\\bDATE_FORMAT\\s*\\(", RegexOption.IGNORE_CASE), "TO_CHAR(")
+                result = result.replace(Regex("\\bGROUP_CONCAT\\s*\\(", RegexOption.IGNORE_CASE), "LISTAGG(")
+                result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSTIMESTAMP")
+                result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\b", RegexOption.IGNORE_CASE), "SYSTIMESTAMP")
+                result = result.replace(Regex("\\bCURRENT_DATE\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSDATE")
+                result = result.replace(Regex("\\bCURRENT_DATE\\b", RegexOption.IGNORE_CASE), "TRUNC(SYSDATE)")
+
+                // LIMIT 변환 (간단한 패턴 매칭)
+                val limitMatch = Regex("\\bLIMIT\\s+(\\d+)", RegexOption.IGNORE_CASE).find(result)
+                if (limitMatch != null) {
+                    val limitValue = limitMatch.groupValues[1]
+                    result = result.replace(limitMatch.value, "FETCH FIRST $limitValue ROWS ONLY")
+                    appliedRules.add("LIMIT → FETCH FIRST 변환")
+                }
+
+                // OFFSET 변환
+                val offsetMatch = Regex("\\bOFFSET\\s+(\\d+)", RegexOption.IGNORE_CASE).find(result)
+                if (offsetMatch != null) {
+                    val offsetValue = offsetMatch.groupValues[1]
+                    result = result.replace(offsetMatch.value, "OFFSET $offsetValue ROWS")
+                }
+
+                appliedRules.add("MySQL 함수 → Oracle 함수 변환")
+            }
+            DialectType.POSTGRESQL -> {
+                // PostgreSQL 함수 변환
+                result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+                result = result.replace(Regex("\\bDATE_FORMAT\\s*\\(", RegexOption.IGNORE_CASE), "TO_CHAR(")
+                result = result.replace(Regex("\\bGROUP_CONCAT\\s*\\(", RegexOption.IGNORE_CASE), "STRING_AGG(")
+
+                // PostgreSQL은 LIMIT/OFFSET 지원하므로 변환 불필요
+
+                appliedRules.add("MySQL 함수 → PostgreSQL 함수 변환")
+            }
+            else -> { }
+        }
+
+        return result
+    }
+
+    /**
+     * MySQL CREATE TRIGGER를 다른 방언으로 변환
+     * - MySQL TRIGGER 구문 → Oracle/PostgreSQL 형식 변환
+     * - BEFORE/AFTER/INSTEAD OF 타이밍 변환
+     * - INSERT/UPDATE/DELETE 이벤트 변환
+     * - NEW/OLD 참조 변환
+     * - BEGIN...END 블록을 PL/SQL 또는 PL/pgSQL 형식으로 변환
+     * - DEFINER 옵션 제거
+     */
+    private fun convertCreateTriggerFromString(
+        triggerSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+
+        // 트리거 정보 추출
+        val triggerInfo = extractTriggerInfo(triggerSql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                convertTriggerToOracle(triggerInfo, schemaOwner, warnings, appliedRules)
+            }
+            DialectType.POSTGRESQL -> {
+                convertTriggerToPostgreSql(triggerInfo, warnings, appliedRules)
+            }
+            else -> triggerSql
+        }
+    }
+
+    /**
+     * MySQL TRIGGER 문에서 트리거 정보 추출
+     */
+    private fun extractTriggerInfo(triggerSql: String): TriggerInfo {
+        val upperSql = triggerSql.uppercase()
+
+        // 트리거 이름 추출
+        val triggerNameMatch = Regex(
+            "CREATE\\s+(?:DEFINER\\s*=\\s*[^\\s]+\\s+)?TRIGGER\\s+[`\"]?(\\w+)[`\"]?",
+            RegexOption.IGNORE_CASE
+        ).find(triggerSql)
+        val triggerName = triggerNameMatch?.groupValues?.get(1) ?: "UNNAMED_TRIGGER"
+
+        // 타이밍 추출 (BEFORE/AFTER)
+        val timing = when {
+            upperSql.contains("BEFORE INSERT") || upperSql.contains("BEFORE UPDATE") || upperSql.contains("BEFORE DELETE") -> "BEFORE"
+            upperSql.contains("AFTER INSERT") || upperSql.contains("AFTER UPDATE") || upperSql.contains("AFTER DELETE") -> "AFTER"
+            else -> "BEFORE"
+        }
+
+        // 이벤트 추출 (INSERT/UPDATE/DELETE)
+        val events = mutableListOf<String>()
+        if (upperSql.contains(" INSERT")) events.add("INSERT")
+        if (upperSql.contains(" UPDATE")) events.add("UPDATE")
+        if (upperSql.contains(" DELETE")) events.add("DELETE")
+        if (events.isEmpty()) events.add("INSERT")
+
+        // 테이블 이름 추출
+        val tableNameMatch = Regex(
+            "ON\\s+[`\"]?(\\w+)[`\"]?",
+            RegexOption.IGNORE_CASE
+        ).find(triggerSql)
+        val tableName = tableNameMatch?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        // FOR EACH ROW 여부
+        val forEachRow = upperSql.contains("FOR EACH ROW")
+
+        // 트리거 본문 추출 (BEGIN...END 사이)
+        val bodyMatch = Regex(
+            "BEGIN\\s+(.+?)\\s+END",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).find(triggerSql)
+        val body = bodyMatch?.groupValues?.get(1)?.trim() ?: ""
+
+        // FOLLOWS/PRECEDES 추출 (MySQL 5.7+)
+        val orderMatch = Regex(
+            "(FOLLOWS|PRECEDES)\\s+[`\"]?(\\w+)[`\"]?",
+            RegexOption.IGNORE_CASE
+        ).find(triggerSql)
+        val triggerOrder = orderMatch?.groupValues?.get(1)?.uppercase()
+        val orderTriggerName = orderMatch?.groupValues?.get(2)
+
+        return TriggerInfo(
+            name = triggerName,
+            timing = timing,
+            events = events,
+            tableName = tableName,
+            forEachRow = forEachRow,
+            body = body,
+            triggerOrder = triggerOrder,
+            orderTriggerName = orderTriggerName
+        )
+    }
+
+    /**
+     * MySQL TRIGGER를 Oracle PL/SQL TRIGGER로 변환
+     */
+    private fun convertTriggerToOracle(
+        triggerInfo: TriggerInfo,
+        schemaOwner: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+
+        // CREATE OR REPLACE TRIGGER
+        result.appendLine("CREATE OR REPLACE TRIGGER \"$schemaOwner\".\"${triggerInfo.name}\"")
+
+        // BEFORE/AFTER + 이벤트
+        val events = triggerInfo.events.joinToString(" OR ")
+        result.appendLine("${triggerInfo.timing} $events")
+
+        // ON 테이블
+        result.appendLine("ON \"$schemaOwner\".\"${triggerInfo.tableName}\"")
+
+        // FOR EACH ROW
+        if (triggerInfo.forEachRow) {
+            result.appendLine("FOR EACH ROW")
+        }
+
+        // FOLLOWS/PRECEDES 경고
+        if (triggerInfo.triggerOrder != null) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL의 ${triggerInfo.triggerOrder} 옵션은 Oracle에서 직접 지원되지 않습니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "Oracle에서는 트리거 실행 순서를 FOLLOWS/PRECEDES로 제어할 수 없습니다. 트리거 로직을 통합하거나 COMPOUND TRIGGER를 고려하세요."
+            ))
+        }
+
+        // 트리거 본문 변환
+        val oracleBody = convertTriggerBodyToOracle(triggerInfo.body, warnings, appliedRules)
+        result.appendLine("BEGIN")
+        result.appendLine("    $oracleBody")
+        result.append("END;")
+
+        appliedRules.add("CREATE TRIGGER MySQL → Oracle 형식으로 변환")
+        appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+        appliedRules.add("DEFINER 옵션 제거")
+
+        return result.toString()
+    }
+
+    /**
+     * MySQL TRIGGER를 PostgreSQL PL/pgSQL TRIGGER로 변환
+     * PostgreSQL은 트리거 함수와 트리거를 분리하여 생성해야 함
+     */
+    private fun convertTriggerToPostgreSql(
+        triggerInfo: TriggerInfo,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+        val functionName = "${triggerInfo.name}_func"
+
+        // 1. 트리거 함수 생성
+        result.appendLine("-- 트리거 함수 생성")
+        result.appendLine("CREATE OR REPLACE FUNCTION \"$functionName\"()")
+        result.appendLine("RETURNS TRIGGER AS \$\$")
+        result.appendLine("BEGIN")
+
+        // 트리거 본문 변환
+        val pgBody = convertTriggerBodyToPostgreSql(triggerInfo.body, triggerInfo.events, warnings, appliedRules)
+        result.appendLine("    $pgBody")
+
+        // RETURN 문 추가 (PostgreSQL 필수)
+        if (triggerInfo.timing == "BEFORE") {
+            if (triggerInfo.events.contains("DELETE")) {
+                result.appendLine("    RETURN OLD;")
+            } else {
+                result.appendLine("    RETURN NEW;")
+            }
+        } else {
+            result.appendLine("    RETURN NULL;")
+        }
+
+        result.appendLine("END;")
+        result.appendLine("\$\$ LANGUAGE plpgsql;")
+        result.appendLine()
+
+        // 2. 트리거 생성
+        result.appendLine("-- 트리거 생성")
+        result.append("CREATE TRIGGER \"${triggerInfo.name}\"")
+        result.appendLine()
+
+        // BEFORE/AFTER + 이벤트
+        val events = triggerInfo.events.joinToString(" OR ")
+        result.appendLine("${triggerInfo.timing} $events")
+
+        // ON 테이블
+        result.appendLine("ON \"${triggerInfo.tableName}\"")
+
+        // FOR EACH ROW
+        if (triggerInfo.forEachRow) {
+            result.appendLine("FOR EACH ROW")
+        }
+
+        // EXECUTE FUNCTION
+        result.append("EXECUTE FUNCTION \"$functionName\"();")
+
+        // FOLLOWS/PRECEDES 경고
+        if (triggerInfo.triggerOrder != null) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL의 ${triggerInfo.triggerOrder} 옵션은 PostgreSQL에서 지원되지 않습니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "PostgreSQL에서는 트리거 실행 순서가 이름의 알파벳 순서로 결정됩니다."
+            ))
+        }
+
+        appliedRules.add("CREATE TRIGGER MySQL → PostgreSQL 형식으로 변환")
+        appliedRules.add("트리거 함수 분리 생성 (PostgreSQL 필수)")
+        appliedRules.add("백틱(`) → 큰따옴표(\") 변환")
+        appliedRules.add("DEFINER 옵션 제거")
+
+        return result.toString()
+    }
+
+    /**
+     * MySQL 트리거 본문을 Oracle PL/SQL 형식으로 변환
+     */
+    private fun convertTriggerBodyToOracle(
+        body: String,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = body
+
+        // 백틱 → 큰따옴표 변환
+        result = result.replace("`", "\"")
+
+        // NEW/OLD 참조 변환 (MySQL NEW.col → Oracle :NEW.col)
+        result = result.replace(Regex("\\bNEW\\.([a-zA-Z_][a-zA-Z0-9_]*)", RegexOption.IGNORE_CASE)) { matchResult ->
+            ":NEW.${matchResult.groupValues[1]}"
+        }
+        result = result.replace(Regex("\\bOLD\\.([a-zA-Z_][a-zA-Z0-9_]*)", RegexOption.IGNORE_CASE)) { matchResult ->
+            ":OLD.${matchResult.groupValues[1]}"
+        }
+
+        // MySQL 함수 → Oracle 함수 변환
+        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSDATE")
+        result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSTIMESTAMP")
+        result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\b", RegexOption.IGNORE_CASE), "SYSTIMESTAMP")
+        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+        result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+        result = result.replace(Regex("\\bCONCAT\\s*\\(", RegexOption.IGNORE_CASE), "CONCAT(")
+        result = result.replace(Regex("\\bUUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYS_GUID()")
+
+        // IF 문 변환 (MySQL IF...THEN...END IF → Oracle IF...THEN...END IF)
+        // MySQL과 Oracle의 IF 구문은 유사하므로 기본적으로 호환됨
+
+        // SET 문 변환 (MySQL SET var = value → Oracle var := value)
+        result = result.replace(Regex("\\bSET\\s+(@?[a-zA-Z_][a-zA-Z0-9_]*)\\s*=", RegexOption.IGNORE_CASE)) { matchResult ->
+            val varName = matchResult.groupValues[1].removePrefix("@")
+            "$varName :="
+        }
+
+        // SIGNAL SQLSTATE 변환
+        if (result.uppercase().contains("SIGNAL SQLSTATE")) {
+            result = result.replace(
+                Regex("SIGNAL\\s+SQLSTATE\\s+'[^']*'\\s+SET\\s+MESSAGE_TEXT\\s*=\\s*'([^']*)'", RegexOption.IGNORE_CASE)
+            ) { matchResult ->
+                "RAISE_APPLICATION_ERROR(-20001, '${matchResult.groupValues[1]}')"
+            }
+            appliedRules.add("SIGNAL SQLSTATE → RAISE_APPLICATION_ERROR 변환")
+        }
+
+        appliedRules.add("NEW/OLD 참조를 :NEW/:OLD로 변환")
+        appliedRules.add("MySQL 함수 → Oracle 함수 변환")
+
+        return result
+    }
+
+    /**
+     * MySQL 트리거 본문을 PostgreSQL PL/pgSQL 형식으로 변환
+     */
+    private fun convertTriggerBodyToPostgreSql(
+        body: String,
+        events: List<String>,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = body
+
+        // 백틱 → 큰따옴표 변환
+        result = result.replace("`", "\"")
+
+        // NEW/OLD 참조는 PostgreSQL에서도 동일하게 사용 가능 (콜론 없이)
+        // MySQL: NEW.col, PostgreSQL: NEW.col (동일)
+
+        // MySQL 함수 → PostgreSQL 함수 변환
+        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+        result = result.replace(Regex("\\bCONCAT\\s*\\(", RegexOption.IGNORE_CASE), "CONCAT(")
+        result = result.replace(Regex("\\bUUID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "gen_random_uuid()")
+
+        // SET 문 변환 (MySQL SET var = value → PostgreSQL var := value)
+        result = result.replace(Regex("\\bSET\\s+(@?[a-zA-Z_][a-zA-Z0-9_]*)\\s*=", RegexOption.IGNORE_CASE)) { matchResult ->
+            val varName = matchResult.groupValues[1].removePrefix("@")
+            "$varName :="
+        }
+
+        // SIGNAL SQLSTATE 변환
+        if (result.uppercase().contains("SIGNAL SQLSTATE")) {
+            result = result.replace(
+                Regex("SIGNAL\\s+SQLSTATE\\s+'([^']*)'\\s+SET\\s+MESSAGE_TEXT\\s*=\\s*'([^']*)'", RegexOption.IGNORE_CASE)
+            ) { matchResult ->
+                "RAISE EXCEPTION '${matchResult.groupValues[2]}' USING ERRCODE = '${matchResult.groupValues[1]}'"
+            }
+            appliedRules.add("SIGNAL SQLSTATE → RAISE EXCEPTION 변환")
+        }
+
+        // INSERT INTO ... SELECT 문은 PostgreSQL에서도 동일하게 사용 가능
+
+        appliedRules.add("MySQL 함수 → PostgreSQL 함수 변환")
+
+        return result
     }
 }
