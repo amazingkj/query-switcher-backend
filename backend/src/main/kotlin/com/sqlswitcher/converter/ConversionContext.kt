@@ -525,61 +525,6 @@ data class SubpartitionDefinition(
     val values: String? = null
 )
 
-/**
- * 트리거 정보를 담는 데이터 클래스
- */
-data class TriggerInfo(
-    val name: String,
-    val timing: String,             // BEFORE, AFTER
-    val events: List<String>,       // INSERT, UPDATE, DELETE
-    val tableName: String,
-    val forEachRow: Boolean = true,
-    val body: String,
-    val triggerOrder: String? = null,       // FOLLOWS, PRECEDES (MySQL 5.7+)
-    val orderTriggerName: String? = null    // triggerOrder가 참조하는 트리거 이름
-) {
-    /**
-     * Oracle 트리거 헤더 생성
-     */
-    fun toOracleHeader(schemaOwner: String): String {
-        val sb = StringBuilder()
-        sb.appendLine("CREATE OR REPLACE TRIGGER \"$schemaOwner\".\"$name\"")
-        sb.appendLine("$timing ${events.joinToString(" OR ")}")
-        sb.appendLine("ON \"$schemaOwner\".\"$tableName\"")
-        if (forEachRow) {
-            sb.append("FOR EACH ROW")
-        }
-        return sb.toString()
-    }
-
-    /**
-     * PostgreSQL 트리거 헤더 생성
-     */
-    fun toPostgreSqlHeader(): String {
-        val sb = StringBuilder()
-        sb.appendLine("CREATE TRIGGER \"$name\"")
-        sb.appendLine("$timing ${events.joinToString(" OR ")}")
-        sb.appendLine("ON \"$tableName\"")
-        if (forEachRow) {
-            sb.appendLine("FOR EACH ROW")
-        }
-        return sb.toString()
-    }
-
-    /**
-     * MySQL 트리거 헤더 생성
-     */
-    fun toMySqlHeader(): String {
-        val sb = StringBuilder()
-        sb.appendLine("CREATE TRIGGER `$name`")
-        sb.appendLine("$timing ${events.first()}")  // MySQL은 한 이벤트만 지원
-        sb.appendLine("ON `$tableName`")
-        if (forEachRow) {
-            sb.append("FOR EACH ROW")
-        }
-        return sb.toString()
-    }
-}
 
 /**
  * STORED PROCEDURE 파라미터 정보
@@ -1358,6 +1303,936 @@ data class UnpivotInfo(
                 sb.appendLine()
             }
         }
+
+        return sb.toString()
+    }
+}
+
+// ==================== Phase 3: 고급 DDL/DML 변환 ====================
+
+/**
+ * 함수 기반 인덱스 정보
+ */
+data class FunctionBasedIndexInfo(
+    val indexName: String,
+    val tableName: String,
+    val expressions: List<String>,      // 함수 표현식 (예: UPPER(name), SUBSTR(code, 1, 3))
+    val isUnique: Boolean = false,
+    val tablespace: String? = null
+) {
+    /**
+     * Oracle 함수 기반 인덱스 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val uniqueStr = if (isUnique) "UNIQUE " else ""
+        val exprsQuoted = expressions.joinToString(", ")
+        val tablespaceStr = tablespace?.let { " TABLESPACE \"$it\"" } ?: ""
+
+        return "CREATE ${uniqueStr}INDEX \"$schemaOwner\".\"$indexName\" ON \"$schemaOwner\".\"$tableName\" ($exprsQuoted)$tablespaceStr"
+    }
+
+    /**
+     * PostgreSQL 함수 기반 인덱스 생성
+     */
+    fun toPostgreSql(): String {
+        val uniqueStr = if (isUnique) "UNIQUE " else ""
+        val exprsConverted = expressions.map { convertExpressionToPostgreSql(it) }
+
+        return "CREATE ${uniqueStr}INDEX \"$indexName\" ON \"$tableName\" (${exprsConverted.joinToString(", ")})"
+    }
+
+    /**
+     * MySQL 함수 기반 인덱스 생성 (MySQL 8.0+)
+     */
+    fun toMySql(): String {
+        val uniqueStr = if (isUnique) "UNIQUE " else ""
+        val exprsConverted = expressions.map { "($it)" }  // MySQL은 괄호로 감싸야 함
+
+        return "CREATE ${uniqueStr}INDEX `$indexName` ON `$tableName` (${exprsConverted.joinToString(", ")})"
+    }
+
+    private fun convertExpressionToPostgreSql(expr: String): String {
+        var result = expr
+        // Oracle/MySQL 함수 → PostgreSQL 함수 변환
+        result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+        result = result.replace(Regex("\\bSUBSTR\\s*\\(", RegexOption.IGNORE_CASE), "SUBSTRING(")
+        return "($result)"
+    }
+}
+
+/**
+ * Materialized View 정보
+ */
+data class MaterializedViewInfo(
+    val viewName: String,
+    val selectQuery: String,
+    val buildOption: BuildOption = BuildOption.IMMEDIATE,   // BUILD IMMEDIATE/DEFERRED
+    val refreshOption: RefreshOption = RefreshOption.COMPLETE,  // REFRESH COMPLETE/FAST/FORCE
+    val refreshSchedule: String? = null,    // NEXT SYSDATE + 1/24 등
+    val enableQueryRewrite: Boolean = false
+) {
+    enum class BuildOption { IMMEDIATE, DEFERRED }
+    enum class RefreshOption { COMPLETE, FAST, FORCE, NEVER }
+
+    /**
+     * Oracle Materialized View 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val sb = StringBuilder()
+        sb.append("CREATE MATERIALIZED VIEW \"$schemaOwner\".\"$viewName\"")
+        sb.appendLine()
+        sb.append("BUILD ${buildOption.name}")
+        sb.appendLine()
+
+        when (refreshOption) {
+            RefreshOption.NEVER -> sb.append("NEVER REFRESH")
+            else -> {
+                sb.append("REFRESH ${refreshOption.name}")
+                refreshSchedule?.let {
+                    sb.appendLine()
+                    sb.append("START WITH SYSDATE NEXT $it")
+                }
+            }
+        }
+
+        if (enableQueryRewrite) {
+            sb.appendLine()
+            sb.append("ENABLE QUERY REWRITE")
+        }
+
+        sb.appendLine()
+        sb.append("AS")
+        sb.appendLine()
+        sb.append(selectQuery)
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL Materialized View 생성
+     */
+    fun toPostgreSql(warnings: MutableList<ConversionWarning>): String {
+        val sb = StringBuilder()
+        sb.append("CREATE MATERIALIZED VIEW \"$viewName\" AS")
+        sb.appendLine()
+        sb.append(selectQuery)
+
+        // PostgreSQL은 BUILD, REFRESH 옵션을 직접 지원하지 않음
+        if (refreshOption != RefreshOption.NEVER) {
+            warnings.add(ConversionWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "PostgreSQL은 자동 REFRESH를 지원하지 않습니다. REFRESH MATERIALIZED VIEW를 수동으로 실행해야 합니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "pg_cron 등 스케줄러를 사용하거나 트리거 기반 갱신을 구현하세요."
+            ))
+        }
+
+        if (enableQueryRewrite) {
+            warnings.add(ConversionWarning(
+                type = WarningType.UNSUPPORTED_FUNCTION,
+                message = "PostgreSQL은 QUERY REWRITE를 지원하지 않습니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "쿼리에서 직접 Materialized View를 참조하세요."
+            ))
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * MySQL용 - Materialized View 시뮬레이션 (테이블 + 프로시저)
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "MySQL은 Materialized View를 직접 지원하지 않습니다.",
+            severity = WarningSeverity.WARNING,
+            suggestion = "일반 테이블 + 스케줄러/이벤트로 시뮬레이션합니다."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("-- MySQL Materialized View 시뮬레이션")
+        sb.appendLine("-- 1. 테이블 생성")
+        sb.appendLine("CREATE TABLE `$viewName` AS")
+        sb.appendLine(selectQuery.replace("\"", "`"))
+        sb.appendLine(";")
+        sb.appendLine()
+        sb.appendLine("-- 2. 갱신 프로시저")
+        sb.appendLine("DELIMITER //")
+        sb.appendLine("CREATE PROCEDURE `refresh_$viewName`()")
+        sb.appendLine("BEGIN")
+        sb.appendLine("    TRUNCATE TABLE `$viewName`;")
+        sb.appendLine("    INSERT INTO `$viewName`")
+        sb.appendLine("    ${selectQuery.replace("\"", "`")};")
+        sb.appendLine("END //")
+        sb.appendLine("DELIMITER ;")
+        sb.appendLine()
+        sb.appendLine("-- 3. 이벤트 스케줄러 (선택 사항)")
+        refreshSchedule?.let {
+            sb.appendLine("CREATE EVENT `refresh_${viewName}_event`")
+            sb.appendLine("ON SCHEDULE EVERY 1 HOUR")
+            sb.appendLine("DO CALL `refresh_$viewName`();")
+        }
+
+        return sb.toString()
+    }
+}
+
+/**
+ * JSON 함수 정보
+ */
+data class JsonFunctionInfo(
+    val functionType: JsonFunctionType,
+    val jsonExpression: String,         // JSON 컬럼 또는 표현식
+    val path: String?,                  // JSON 경로
+    val arguments: List<String> = emptyList()
+) {
+    enum class JsonFunctionType {
+        EXTRACT,        // JSON_EXTRACT / JSON_VALUE
+        SET,            // JSON_SET
+        INSERT,         // JSON_INSERT
+        REPLACE,        // JSON_REPLACE
+        REMOVE,         // JSON_REMOVE
+        CONTAINS,       // JSON_CONTAINS
+        ARRAY_LENGTH,   // JSON_LENGTH / JSON_ARRAY_LENGTH
+        KEYS,           // JSON_KEYS
+        OBJECT,         // JSON_OBJECT
+        ARRAY,          // JSON_ARRAY
+        QUERY           // JSON_QUERY (복합 결과 반환)
+    }
+
+    /**
+     * Oracle JSON 함수로 변환
+     */
+    fun toOracle(): String {
+        return when (functionType) {
+            JsonFunctionType.EXTRACT -> "JSON_VALUE($jsonExpression, '$path')"
+            JsonFunctionType.QUERY -> "JSON_QUERY($jsonExpression, '$path')"
+            JsonFunctionType.CONTAINS -> "JSON_EXISTS($jsonExpression, '$path')"
+            JsonFunctionType.OBJECT -> "JSON_OBJECT(${arguments.joinToString(", ")})"
+            JsonFunctionType.ARRAY -> "JSON_ARRAY(${arguments.joinToString(", ")})"
+            JsonFunctionType.ARRAY_LENGTH -> "JSON_VALUE($jsonExpression, '\$.size()')"
+            else -> "/* JSON 함수 수동 변환 필요 */ $jsonExpression"
+        }
+    }
+
+    /**
+     * PostgreSQL JSON 함수로 변환
+     */
+    fun toPostgreSql(): String {
+        // PostgreSQL은 -> (JSON), ->> (text) 연산자 사용
+        val pgPath = path?.replace("$.", "")?.replace(".", "'->'")
+        return when (functionType) {
+            JsonFunctionType.EXTRACT -> "$jsonExpression->>'$pgPath'"
+            JsonFunctionType.QUERY -> "$jsonExpression->'$pgPath'"
+            JsonFunctionType.CONTAINS -> "$jsonExpression @> '${arguments.firstOrNull() ?: "{}"}'::jsonb"
+            JsonFunctionType.OBJECT -> "jsonb_build_object(${arguments.joinToString(", ")})"
+            JsonFunctionType.ARRAY -> "jsonb_build_array(${arguments.joinToString(", ")})"
+            JsonFunctionType.ARRAY_LENGTH -> "jsonb_array_length($jsonExpression)"
+            JsonFunctionType.KEYS -> "jsonb_object_keys($jsonExpression)"
+            else -> "/* JSON 함수 수동 변환 필요 */ $jsonExpression"
+        }
+    }
+
+    /**
+     * MySQL JSON 함수로 변환
+     */
+    fun toMySql(): String {
+        return when (functionType) {
+            JsonFunctionType.EXTRACT -> "JSON_EXTRACT($jsonExpression, '$path')"
+            JsonFunctionType.QUERY -> "JSON_EXTRACT($jsonExpression, '$path')"
+            JsonFunctionType.SET -> "JSON_SET($jsonExpression, '$path', ${arguments.firstOrNull()})"
+            JsonFunctionType.INSERT -> "JSON_INSERT($jsonExpression, '$path', ${arguments.firstOrNull()})"
+            JsonFunctionType.REPLACE -> "JSON_REPLACE($jsonExpression, '$path', ${arguments.firstOrNull()})"
+            JsonFunctionType.REMOVE -> "JSON_REMOVE($jsonExpression, '$path')"
+            JsonFunctionType.CONTAINS -> "JSON_CONTAINS($jsonExpression, '${arguments.firstOrNull()}')"
+            JsonFunctionType.ARRAY_LENGTH -> "JSON_LENGTH($jsonExpression)"
+            JsonFunctionType.KEYS -> "JSON_KEYS($jsonExpression)"
+            JsonFunctionType.OBJECT -> "JSON_OBJECT(${arguments.joinToString(", ")})"
+            JsonFunctionType.ARRAY -> "JSON_ARRAY(${arguments.joinToString(", ")})"
+        }
+    }
+}
+
+/**
+ * 정규식 함수 정보
+ */
+data class RegexFunctionInfo(
+    val functionType: RegexFunctionType,
+    val sourceExpression: String,
+    val pattern: String,
+    val replacement: String? = null,    // REPLACE 함수용
+    val position: Int = 1,              // 시작 위치
+    val occurrence: Int = 0,            // 발생 횟수 (0 = 모두)
+    val matchParam: String? = null      // 매치 파라미터 (i, c, n 등)
+) {
+    enum class RegexFunctionType {
+        LIKE,           // REGEXP_LIKE / REGEXP / RLIKE
+        SUBSTR,         // REGEXP_SUBSTR
+        REPLACE,        // REGEXP_REPLACE
+        INSTR,          // REGEXP_INSTR
+        COUNT           // REGEXP_COUNT
+    }
+
+    /**
+     * Oracle 정규식 함수로 변환
+     */
+    fun toOracle(): String {
+        val matchStr = matchParam?.let { ", '$it'" } ?: ""
+        return when (functionType) {
+            RegexFunctionType.LIKE -> "REGEXP_LIKE($sourceExpression, '$pattern'$matchStr)"
+            RegexFunctionType.SUBSTR -> "REGEXP_SUBSTR($sourceExpression, '$pattern', $position, $occurrence$matchStr)"
+            RegexFunctionType.REPLACE -> "REGEXP_REPLACE($sourceExpression, '$pattern', '${replacement ?: ""}')"
+            RegexFunctionType.INSTR -> "REGEXP_INSTR($sourceExpression, '$pattern', $position, $occurrence$matchStr)"
+            RegexFunctionType.COUNT -> "REGEXP_COUNT($sourceExpression, '$pattern'$matchStr)"
+        }
+    }
+
+    /**
+     * PostgreSQL 정규식 함수로 변환
+     */
+    fun toPostgreSql(): String {
+        // PostgreSQL은 ~ (매치), ~* (대소문자 무시), SIMILAR TO 등 사용
+        val flags = if (matchParam?.contains("i") == true) "*" else ""
+        return when (functionType) {
+            RegexFunctionType.LIKE -> "$sourceExpression ~$flags '$pattern'"
+            RegexFunctionType.SUBSTR -> "(regexp_matches($sourceExpression, '$pattern'))[1]"
+            RegexFunctionType.REPLACE -> "regexp_replace($sourceExpression, '$pattern', '${replacement ?: ""}')"
+            RegexFunctionType.INSTR -> "/* REGEXP_INSTR 미지원, position() + regexp_matches 조합 필요 */"
+            RegexFunctionType.COUNT -> "(SELECT COUNT(*) FROM regexp_matches($sourceExpression, '$pattern', 'g'))"
+        }
+    }
+
+    /**
+     * MySQL 정규식 함수로 변환
+     */
+    fun toMySql(): String {
+        return when (functionType) {
+            RegexFunctionType.LIKE -> "$sourceExpression REGEXP '$pattern'"
+            RegexFunctionType.SUBSTR -> "REGEXP_SUBSTR($sourceExpression, '$pattern', $position, $occurrence)"
+            RegexFunctionType.REPLACE -> "REGEXP_REPLACE($sourceExpression, '$pattern', '${replacement ?: ""}')"
+            RegexFunctionType.INSTR -> "REGEXP_INSTR($sourceExpression, '$pattern', $position, $occurrence)"
+            RegexFunctionType.COUNT -> "/* MySQL 8.0에서는 REGEXP_COUNT 미지원. LENGTH 기반 계산 필요 */"
+        }
+    }
+}
+
+/**
+ * 테이블 파티션 세부 정보 (Phase 3 확장)
+ */
+data class TablePartitionDetailInfo(
+    val tableName: String,
+    val partitionType: PartitionType,
+    val partitionColumns: List<String>,
+    val partitions: List<PartitionDefinition>,
+    val subpartitionType: PartitionType? = null,
+    val subpartitionColumns: List<String> = emptyList(),
+    val intervalExpression: String? = null  // Oracle INTERVAL 파티션
+) {
+    /**
+     * Oracle 파티션 테이블 생성
+     */
+    fun toOraclePartitionClause(schemaOwner: String): String {
+        val sb = StringBuilder()
+
+        when (partitionType) {
+            PartitionType.RANGE -> {
+                sb.appendLine("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+                intervalExpression?.let {
+                    sb.appendLine("INTERVAL ($it)")
+                }
+            }
+            PartitionType.LIST -> {
+                sb.appendLine("PARTITION BY LIST (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+            }
+            PartitionType.HASH -> {
+                sb.appendLine("PARTITION BY HASH (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+            }
+            else -> sb.appendLine("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+        }
+
+        // 서브파티션
+        subpartitionType?.let { subType ->
+            sb.appendLine("SUBPARTITION BY ${subType.name} (${subpartitionColumns.joinToString(", ") { "\"$it\"" }})")
+        }
+
+        // 파티션 정의
+        sb.appendLine("(")
+        sb.append(partitions.mapIndexed { idx, p ->
+            val isLast = idx == partitions.size - 1
+            "    ${p.toOracleDefinition(isLast)}"
+        }.joinToString(",\n"))
+        sb.appendLine()
+        sb.append(")")
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL 파티션 테이블 생성
+     */
+    fun toPostgreSqlPartitionClause(): String {
+        val sb = StringBuilder()
+
+        when (partitionType) {
+            PartitionType.RANGE -> {
+                sb.append("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+            }
+            PartitionType.LIST -> {
+                sb.append("PARTITION BY LIST (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+            }
+            PartitionType.HASH -> {
+                sb.append("PARTITION BY HASH (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+            }
+            else -> sb.append("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "\"$it\"" }})")
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL 파티션 테이블 개별 파티션 생성문
+     */
+    fun toPostgreSqlPartitionTables(): List<String> {
+        return partitions.map { p ->
+            p.toPostgreSqlDefinition(tableName, partitionType)
+        }
+    }
+
+    /**
+     * MySQL 파티션 테이블 생성
+     */
+    fun toMySqlPartitionClause(): String {
+        val sb = StringBuilder()
+
+        when (partitionType) {
+            PartitionType.RANGE -> {
+                sb.appendLine("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+            PartitionType.COLUMNS -> {
+                sb.appendLine("PARTITION BY RANGE COLUMNS (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+            PartitionType.LIST -> {
+                sb.appendLine("PARTITION BY LIST (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+            PartitionType.HASH -> {
+                sb.appendLine("PARTITION BY HASH (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+            PartitionType.KEY -> {
+                sb.appendLine("PARTITION BY KEY (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+        }
+
+        // 파티션 정의
+        sb.appendLine("(")
+        sb.append(partitions.joinToString(",\n") { "    ${it.toMySqlDefinition()}" })
+        sb.appendLine()
+        sb.append(")")
+
+        return sb.toString()
+    }
+}
+
+// ==================== Phase 4: 고급 데이터베이스 객체 변환 ====================
+
+/**
+ * 트리거 정보
+ */
+data class TriggerInfo(
+    val name: String,
+    val tableName: String,
+    val timing: TriggerTiming,           // BEFORE, AFTER, INSTEAD OF
+    val events: List<TriggerEvent>,      // INSERT, UPDATE, DELETE
+    val forEachRow: Boolean = true,
+    val whenCondition: String? = null,   // WHEN 조건
+    val body: String,                    // 트리거 본문
+    val referencing: ReferencingClause? = null,  // OLD/NEW 별칭
+    val triggerOrder: String? = null,    // FOLLOWS, PRECEDES (MySQL 5.7+)
+    val orderTriggerName: String? = null // triggerOrder가 참조하는 트리거 이름
+) {
+    enum class TriggerTiming { BEFORE, AFTER, INSTEAD_OF }
+    enum class TriggerEvent { INSERT, UPDATE, DELETE }
+
+    data class ReferencingClause(
+        val oldAlias: String? = "OLD",
+        val newAlias: String? = "NEW"
+    )
+
+    /**
+     * Oracle 트리거 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val sb = StringBuilder()
+        sb.append("CREATE OR REPLACE TRIGGER \"$schemaOwner\".\"$name\"")
+        sb.appendLine()
+        sb.append("${timing.name.replace("_", " ")} ${events.joinToString(" OR ") { it.name }}")
+        sb.appendLine()
+        sb.append("ON \"$schemaOwner\".\"$tableName\"")
+
+        referencing?.let { ref ->
+            sb.appendLine()
+            sb.append("REFERENCING")
+            ref.oldAlias?.let { sb.append(" OLD AS $it") }
+            ref.newAlias?.let { sb.append(" NEW AS $it") }
+        }
+
+        if (forEachRow) {
+            sb.appendLine()
+            sb.append("FOR EACH ROW")
+        }
+
+        whenCondition?.let {
+            sb.appendLine()
+            sb.append("WHEN ($it)")
+        }
+
+        sb.appendLine()
+        sb.appendLine("BEGIN")
+        sb.append(body)
+        sb.appendLine()
+        sb.append("END;")
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL 트리거 생성
+     */
+    fun toPostgreSql(): String {
+        val sb = StringBuilder()
+        val funcName = "${name}_func"
+
+        // 1. 트리거 함수 생성
+        sb.appendLine("-- 트리거 함수")
+        sb.appendLine("CREATE OR REPLACE FUNCTION \"$funcName\"()")
+        sb.appendLine("RETURNS TRIGGER AS \$\$")
+        sb.appendLine("BEGIN")
+
+        // 본문 변환 (Oracle → PostgreSQL)
+        var pgBody = body
+            .replace(Regex("\\b:NEW\\.", RegexOption.IGNORE_CASE), "NEW.")
+            .replace(Regex("\\b:OLD\\.", RegexOption.IGNORE_CASE), "OLD.")
+            .replace(Regex("\\bRAISE_APPLICATION_ERROR\\s*\\(", RegexOption.IGNORE_CASE), "RAISE EXCEPTION ")
+
+        sb.appendLine(pgBody)
+
+        // RETURN 문 추가
+        if (timing == TriggerTiming.BEFORE || timing == TriggerTiming.INSTEAD_OF) {
+            if (events.contains(TriggerEvent.DELETE)) {
+                sb.appendLine("    RETURN OLD;")
+            } else {
+                sb.appendLine("    RETURN NEW;")
+            }
+        } else {
+            sb.appendLine("    RETURN NULL;")
+        }
+
+        sb.appendLine("END;")
+        sb.appendLine("\$\$ LANGUAGE plpgsql;")
+        sb.appendLine()
+
+        // 2. 트리거 생성
+        sb.appendLine("-- 트리거")
+        sb.append("CREATE TRIGGER \"$name\"")
+        sb.appendLine()
+
+        val pgTiming = when (timing) {
+            TriggerTiming.INSTEAD_OF -> "INSTEAD OF"
+            else -> timing.name
+        }
+        sb.append("$pgTiming ${events.joinToString(" OR ") { it.name }}")
+        sb.appendLine()
+        sb.append("ON \"$tableName\"")
+
+        if (forEachRow) {
+            sb.appendLine()
+            sb.append("FOR EACH ROW")
+        }
+
+        whenCondition?.let {
+            sb.appendLine()
+            sb.append("WHEN ($it)")
+        }
+
+        sb.appendLine()
+        sb.append("EXECUTE FUNCTION \"$funcName\"();")
+
+        return sb.toString()
+    }
+
+    /**
+     * MySQL 트리거 생성
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        // MySQL은 한 트리거에 하나의 이벤트만 지원
+        if (events.size > 1) {
+            warnings.add(ConversionWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL은 트리거당 하나의 이벤트만 지원합니다. 여러 트리거로 분할됩니다.",
+                severity = WarningSeverity.WARNING
+            ))
+        }
+
+        if (timing == TriggerTiming.INSTEAD_OF) {
+            warnings.add(ConversionWarning(
+                type = WarningType.UNSUPPORTED_FUNCTION,
+                message = "MySQL은 INSTEAD OF 트리거를 지원하지 않습니다.",
+                severity = WarningSeverity.ERROR,
+                suggestion = "BEFORE 트리거로 대체하거나 애플리케이션 레벨에서 처리하세요."
+            ))
+        }
+
+        val sb = StringBuilder()
+
+        events.forEachIndexed { index, event ->
+            if (index > 0) {
+                sb.appendLine()
+                sb.appendLine()
+            }
+
+            val triggerName = if (events.size > 1) "${name}_${event.name.lowercase()}" else name
+
+            sb.appendLine("DELIMITER //")
+            sb.append("CREATE TRIGGER `$triggerName`")
+            sb.appendLine()
+            sb.append("${timing.name} $event")
+            sb.appendLine()
+            sb.append("ON `$tableName`")
+
+            if (forEachRow) {
+                sb.appendLine()
+                sb.append("FOR EACH ROW")
+            }
+
+            sb.appendLine()
+            sb.appendLine("BEGIN")
+
+            // 본문 변환 (Oracle → MySQL)
+            var mysqlBody = body
+                .replace(Regex("\\b:NEW\\.", RegexOption.IGNORE_CASE), "NEW.")
+                .replace(Regex("\\b:OLD\\.", RegexOption.IGNORE_CASE), "OLD.")
+                .replace(Regex("\\bRAISE_APPLICATION_ERROR\\s*\\([^,]+,\\s*", RegexOption.IGNORE_CASE), "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = ")
+
+            sb.appendLine(mysqlBody)
+            sb.appendLine("END //")
+            sb.append("DELIMITER ;")
+        }
+
+        return sb.toString()
+    }
+}
+
+/**
+ * 커서 정보 (저장 프로시저 내)
+ */
+data class CursorInfo(
+    val name: String,
+    val query: String,
+    val parameters: List<CursorParameter> = emptyList(),
+    val isRefCursor: Boolean = false     // REF CURSOR (Oracle)
+) {
+    data class CursorParameter(
+        val name: String,
+        val dataType: String
+    )
+
+    /**
+     * Oracle 커서 선언
+     */
+    fun toOracleDeclare(): String {
+        return if (parameters.isEmpty()) {
+            "CURSOR $name IS\n    $query;"
+        } else {
+            val params = parameters.joinToString(", ") { "${it.name} ${it.dataType}" }
+            "CURSOR $name ($params) IS\n    $query;"
+        }
+    }
+
+    /**
+     * PostgreSQL 커서 선언 (DECLARE 블록)
+     */
+    fun toPostgreSqlDeclare(): String {
+        return "$name CURSOR FOR\n    $query;"
+    }
+
+    /**
+     * MySQL 커서 선언
+     */
+    fun toMySqlDeclare(): String {
+        return "DECLARE $name CURSOR FOR\n    $query;"
+    }
+}
+
+/**
+ * 예외 처리 정보
+ */
+data class ExceptionHandlerInfo(
+    val exceptionName: String,           // NO_DATA_FOUND, TOO_MANY_ROWS, DUP_VAL_ON_INDEX, OTHERS 등
+    val errorCode: Int? = null,          // Oracle 에러 코드 (-20001 등)
+    val handlerBody: String              // 예외 처리 본문
+) {
+    /**
+     * Oracle 예외 핸들러
+     */
+    fun toOracleHandler(): String {
+        return "WHEN $exceptionName THEN\n    $handlerBody"
+    }
+
+    /**
+     * PostgreSQL 예외 핸들러
+     */
+    fun toPostgreSqlHandler(): String {
+        val pgException = when (exceptionName.uppercase()) {
+            "NO_DATA_FOUND" -> "NO_DATA_FOUND"
+            "TOO_MANY_ROWS" -> "TOO_MANY_ROWS"
+            "DUP_VAL_ON_INDEX" -> "UNIQUE_VIOLATION"
+            "OTHERS" -> "OTHERS"
+            else -> exceptionName
+        }
+        return "WHEN $pgException THEN\n    $handlerBody"
+    }
+
+    /**
+     * MySQL 핸들러
+     */
+    fun toMySqlHandler(): String {
+        val (condition, handlerType) = when (exceptionName.uppercase()) {
+            "NO_DATA_FOUND" -> Pair("NOT FOUND", "CONTINUE")
+            "TOO_MANY_ROWS" -> Pair("SQLSTATE '21000'", "EXIT")
+            "DUP_VAL_ON_INDEX" -> Pair("SQLSTATE '23000'", "EXIT")
+            "OTHERS" -> Pair("SQLEXCEPTION", "EXIT")
+            else -> Pair("SQLEXCEPTION", "EXIT")
+        }
+        return "DECLARE $handlerType HANDLER FOR $condition\nBEGIN\n    $handlerBody\nEND;"
+    }
+}
+
+/**
+ * 사용자 정의 타입 정보
+ */
+data class UserDefinedTypeInfo(
+    val name: String,
+    val typeCategory: TypeCategory,
+    val attributes: List<TypeAttribute> = emptyList(),   // OBJECT 타입용
+    val elementType: String? = null,                      // VARRAY/TABLE 타입용
+    val maxSize: Int? = null                              // VARRAY 타입용
+) {
+    enum class TypeCategory {
+        OBJECT,         // 복합 객체 타입
+        VARRAY,         // 가변 배열
+        NESTED_TABLE,   // 중첩 테이블
+        ENUM            // ENUM 타입 (PostgreSQL)
+    }
+
+    data class TypeAttribute(
+        val name: String,
+        val dataType: String
+    )
+
+    /**
+     * Oracle 사용자 정의 타입 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        return when (typeCategory) {
+            TypeCategory.OBJECT -> {
+                val attrs = attributes.joinToString(",\n    ") { "${it.name} ${it.dataType}" }
+                "CREATE OR REPLACE TYPE \"$schemaOwner\".\"$name\" AS OBJECT (\n    $attrs\n);"
+            }
+            TypeCategory.VARRAY -> {
+                "CREATE OR REPLACE TYPE \"$schemaOwner\".\"$name\" AS VARRAY($maxSize) OF $elementType;"
+            }
+            TypeCategory.NESTED_TABLE -> {
+                "CREATE OR REPLACE TYPE \"$schemaOwner\".\"$name\" AS TABLE OF $elementType;"
+            }
+            TypeCategory.ENUM -> {
+                // Oracle은 ENUM 없음, CHECK 제약조건 또는 별도 테이블로 처리
+                "-- Oracle은 ENUM을 직접 지원하지 않습니다.\n-- CHECK 제약조건이나 참조 테이블을 사용하세요."
+            }
+        }
+    }
+
+    /**
+     * PostgreSQL 사용자 정의 타입 생성
+     */
+    fun toPostgreSql(): String {
+        return when (typeCategory) {
+            TypeCategory.OBJECT -> {
+                val attrs = attributes.joinToString(",\n    ") { "\"${it.name}\" ${it.dataType}" }
+                "CREATE TYPE \"$name\" AS (\n    $attrs\n);"
+            }
+            TypeCategory.VARRAY, TypeCategory.NESTED_TABLE -> {
+                // PostgreSQL은 배열 타입 사용
+                "-- PostgreSQL은 네이티브 배열 사용: ${elementType}[]"
+            }
+            TypeCategory.ENUM -> {
+                val values = attributes.joinToString(", ") { "'${it.name}'" }
+                "CREATE TYPE \"$name\" AS ENUM ($values);"
+            }
+        }
+    }
+
+    /**
+     * MySQL 사용자 정의 타입 (제한적 지원)
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.UNSUPPORTED_FUNCTION,
+            message = "MySQL은 사용자 정의 타입을 직접 지원하지 않습니다.",
+            severity = WarningSeverity.WARNING,
+            suggestion = "JSON 컬럼 또는 별도 테이블로 대체하세요."
+        ))
+
+        return when (typeCategory) {
+            TypeCategory.OBJECT -> {
+                // JSON 컬럼으로 시뮬레이션
+                "-- MySQL: JSON 컬럼으로 시뮬레이션\n-- 컬럼 타입으로 JSON을 사용하세요."
+            }
+            TypeCategory.VARRAY, TypeCategory.NESTED_TABLE -> {
+                "-- MySQL: JSON 배열로 시뮬레이션\n-- 컬럼 타입으로 JSON을 사용하세요."
+            }
+            TypeCategory.ENUM -> {
+                val values = attributes.joinToString(", ") { "'${it.name}'" }
+                "-- MySQL ENUM 타입\nENUM($values)"
+            }
+        }
+    }
+}
+
+/**
+ * 시노님 정보
+ */
+data class SynonymInfo(
+    val name: String,
+    val targetSchema: String?,
+    val targetObject: String,
+    val isPublic: Boolean = false
+) {
+    /**
+     * Oracle 시노님 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val publicKeyword = if (isPublic) "PUBLIC " else ""
+        val targetRef = if (targetSchema != null) "\"$targetSchema\".\"$targetObject\"" else "\"$targetObject\""
+        return if (isPublic) {
+            "CREATE OR REPLACE ${publicKeyword}SYNONYM \"$name\" FOR $targetRef;"
+        } else {
+            "CREATE OR REPLACE SYNONYM \"$schemaOwner\".\"$name\" FOR $targetRef;"
+        }
+    }
+
+    /**
+     * PostgreSQL 시노님 (뷰로 시뮬레이션)
+     */
+    fun toPostgreSql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "PostgreSQL은 시노님을 직접 지원하지 않습니다. 뷰로 시뮬레이션됩니다.",
+            severity = WarningSeverity.INFO
+        ))
+
+        val targetRef = if (targetSchema != null) "\"$targetSchema\".\"$targetObject\"" else "\"$targetObject\""
+        return "CREATE OR REPLACE VIEW \"$name\" AS SELECT * FROM $targetRef;"
+    }
+
+    /**
+     * MySQL 시노님 (뷰로 시뮬레이션)
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "MySQL은 시노님을 직접 지원하지 않습니다. 뷰로 시뮬레이션됩니다.",
+            severity = WarningSeverity.INFO
+        ))
+
+        val targetRef = if (targetSchema != null) "`$targetSchema`.`$targetObject`" else "`$targetObject`"
+        return "CREATE OR REPLACE VIEW `$name` AS SELECT * FROM $targetRef;"
+    }
+}
+
+/**
+ * 데이터베이스 링크 정보
+ */
+data class DatabaseLinkInfo(
+    val name: String,
+    val connectString: String,           // 연결 문자열 (host:port/service)
+    val username: String?,
+    val isPublic: Boolean = false
+) {
+    /**
+     * Oracle 데이터베이스 링크 생성
+     */
+    fun toOracle(): String {
+        val publicKeyword = if (isPublic) "PUBLIC " else ""
+        val sb = StringBuilder()
+        sb.append("CREATE ${publicKeyword}DATABASE LINK \"$name\"")
+        sb.appendLine()
+
+        username?.let {
+            sb.append("CONNECT TO \"$it\" IDENTIFIED BY \"****\"")
+            sb.appendLine()
+        }
+
+        sb.append("USING '$connectString'")
+        sb.append(";")
+
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL FDW (Foreign Data Wrapper)
+     */
+    fun toPostgreSql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "PostgreSQL은 Database Link 대신 Foreign Data Wrapper (FDW)를 사용합니다.",
+            severity = WarningSeverity.INFO,
+            suggestion = "postgres_fdw 확장을 설치하고 설정하세요."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("-- PostgreSQL Foreign Data Wrapper 설정")
+        sb.appendLine("-- 1. 확장 설치 (한 번만)")
+        sb.appendLine("CREATE EXTENSION IF NOT EXISTS postgres_fdw;")
+        sb.appendLine()
+        sb.appendLine("-- 2. 외부 서버 생성")
+        sb.appendLine("CREATE SERVER \"$name\"")
+        sb.appendLine("    FOREIGN DATA WRAPPER postgres_fdw")
+        sb.appendLine("    OPTIONS (host 'hostname', port '5432', dbname 'dbname');")
+        sb.appendLine()
+        sb.appendLine("-- 3. 사용자 매핑")
+        username?.let {
+            sb.appendLine("CREATE USER MAPPING FOR CURRENT_USER")
+            sb.appendLine("    SERVER \"$name\"")
+            sb.appendLine("    OPTIONS (user '$it', password '****');")
+        }
+        sb.appendLine()
+        sb.appendLine("-- 4. 외부 테이블 생성 (필요에 따라)")
+        sb.append("-- CREATE FOREIGN TABLE remote_table (...) SERVER \"$name\" OPTIONS (table_name 'original_table');")
+
+        return sb.toString()
+    }
+
+    /**
+     * MySQL Federated Engine
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "MySQL은 Database Link 대신 FEDERATED 스토리지 엔진을 사용합니다.",
+            severity = WarningSeverity.INFO,
+            suggestion = "FEDERATED 엔진이 활성화되어 있어야 합니다."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("-- MySQL FEDERATED 테이블 예시")
+        sb.appendLine("-- FEDERATED 엔진을 활성화해야 합니다: SET GLOBAL federated=1")
+        sb.appendLine()
+        sb.appendLine("-- 원격 테이블에 대한 FEDERATED 테이블 생성:")
+        sb.appendLine("-- CREATE TABLE `remote_table` (")
+        sb.appendLine("--     ... 컬럼 정의 ...")
+        sb.appendLine("-- ) ENGINE=FEDERATED")
+        sb.append("-- CONNECTION='mysql://${username ?: "user"}:****@hostname:3306/dbname/table_name';")
 
         return sb.toString()
     }

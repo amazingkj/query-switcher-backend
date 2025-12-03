@@ -1357,4 +1357,1040 @@ $sql
 
         return sql
     }
+
+    // ==================== Phase 3: 고급 SQL 기능 변환 ====================
+
+    /**
+     * Oracle 함수 기반 인덱스를 다른 방언으로 변환
+     * 예: CREATE INDEX idx_name ON table (UPPER(column))
+     */
+    fun convertFunctionBasedIndex(
+        indexSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: com.sqlswitcher.model.ConversionOptions?
+    ): String {
+        val indexInfo = extractFunctionBasedIndexInfo(indexSql)
+
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "MySQL 8.0 미만에서는 함수 기반 인덱스가 지원되지 않습니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "MySQL 8.0 이상을 사용하거나 Generated Column을 사용하세요."
+                ))
+                appliedRules.add("Oracle 함수 기반 인덱스 → MySQL 형식으로 변환")
+                indexInfo.toMySql()
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Oracle 함수 기반 인덱스 → PostgreSQL 형식으로 변환")
+                indexInfo.toPostgreSql()
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle 함수 기반 인덱스 유지 (Tibero 호환)")
+                indexSql
+            }
+            DialectType.ORACLE -> indexSql
+        }
+    }
+
+    /**
+     * Oracle 함수 기반 인덱스 정보 추출
+     */
+    private fun extractFunctionBasedIndexInfo(sql: String): FunctionBasedIndexInfo {
+        val upperSql = sql.uppercase()
+        val isUnique = upperSql.contains("CREATE UNIQUE INDEX")
+
+        // 인덱스명 추출 (스키마.인덱스명 형식 처리)
+        val indexNameRegex = if (isUnique) {
+            """CREATE\s+UNIQUE\s+INDEX\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        } else {
+            """CREATE\s+INDEX\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        }
+        val indexNameMatch = indexNameRegex.find(sql)
+        val indexName = indexNameMatch?.groupValues?.get(2) ?:
+            Regex("""CREATE\s+(?:UNIQUE\s+)?INDEX\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(sql)?.groupValues?.get(1) ?: "UNKNOWN_INDEX"
+
+        // 테이블명 추출 (스키마.테이블명 형식 처리)
+        val tableNameRegex = """ON\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val tableNameMatch = tableNameRegex.find(sql)
+        val tableName = tableNameMatch?.groupValues?.get(2) ?:
+            Regex("""ON\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(sql)?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        // 표현식 추출 (괄호 안의 내용)
+        val expressionRegex = """ON\s+"?\w+"?(?:\."?\w+"?)?\s*\((.+?)\)(?:\s+TABLESPACE|\s*;|\s*$)""".toRegex(RegexOption.IGNORE_CASE)
+        val expressionMatch = expressionRegex.find(sql)
+        val expressions = if (expressionMatch != null) {
+            parseIndexExpressions(expressionMatch.groupValues[1])
+        } else {
+            emptyList()
+        }
+
+        // 테이블스페이스 추출
+        val tablespaceRegex = """TABLESPACE\s+"?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val tablespace = tablespaceRegex.find(sql)?.groupValues?.get(1)
+
+        return FunctionBasedIndexInfo(
+            indexName = indexName,
+            tableName = tableName,
+            expressions = expressions,
+            isUnique = isUnique,
+            tablespace = tablespace
+        )
+    }
+
+    /**
+     * 인덱스 표현식 파싱 (중첩 괄호 처리)
+     */
+    private fun parseIndexExpressions(exprsStr: String): List<String> {
+        val expressions = mutableListOf<String>()
+        var current = StringBuilder()
+        var depth = 0
+
+        for (char in exprsStr) {
+            when (char) {
+                '(' -> {
+                    depth++
+                    current.append(char)
+                }
+                ')' -> {
+                    depth--
+                    current.append(char)
+                }
+                ',' -> {
+                    if (depth == 0) {
+                        expressions.add(current.toString().trim())
+                        current = StringBuilder()
+                    } else {
+                        current.append(char)
+                    }
+                }
+                else -> current.append(char)
+            }
+        }
+
+        if (current.isNotEmpty()) {
+            expressions.add(current.toString().trim())
+        }
+
+        return expressions
+    }
+
+    /**
+     * Oracle Materialized View를 다른 방언으로 변환
+     */
+    fun convertMaterializedView(
+        mvSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: com.sqlswitcher.model.ConversionOptions?
+    ): String {
+        val mvInfo = extractMaterializedViewInfo(mvSql)
+
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                warnings.add(createWarning(
+                    type = WarningType.UNSUPPORTED_FUNCTION,
+                    message = "MySQL은 네이티브 Materialized View를 지원하지 않습니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "테이블 + 프로시저 + 이벤트 스케줄러로 시뮬레이션됩니다."
+                ))
+                appliedRules.add("Oracle Materialized View → MySQL 시뮬레이션 (테이블 + 프로시저)")
+                mvInfo.toMySql(warnings)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Oracle Materialized View → PostgreSQL 형식으로 변환")
+                mvInfo.toPostgreSql(warnings)
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle Materialized View 유지 (Tibero 호환)")
+                mvSql
+            }
+            DialectType.ORACLE -> mvSql
+        }
+    }
+
+    /**
+     * Oracle Materialized View 정보 추출
+     */
+    private fun extractMaterializedViewInfo(sql: String): MaterializedViewInfo {
+        val upperSql = sql.uppercase()
+
+        // 뷰명 추출 (스키마.뷰명 형식 처리)
+        val viewNameRegex = """CREATE\s+MATERIALIZED\s+VIEW\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val viewNameMatch = viewNameRegex.find(sql)
+        val viewName = viewNameMatch?.groupValues?.get(2) ?:
+            Regex("""CREATE\s+MATERIALIZED\s+VIEW\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(sql)?.groupValues?.get(1) ?: "UNKNOWN_MV"
+
+        // BUILD 옵션 추출
+        val buildOption = when {
+            upperSql.contains("BUILD DEFERRED") -> MaterializedViewInfo.BuildOption.DEFERRED
+            upperSql.contains("BUILD IMMEDIATE") -> MaterializedViewInfo.BuildOption.IMMEDIATE
+            else -> MaterializedViewInfo.BuildOption.IMMEDIATE
+        }
+
+        // REFRESH 옵션 추출
+        val refreshOption = when {
+            upperSql.contains("REFRESH FAST") -> MaterializedViewInfo.RefreshOption.FAST
+            upperSql.contains("REFRESH COMPLETE") -> MaterializedViewInfo.RefreshOption.COMPLETE
+            upperSql.contains("REFRESH FORCE") -> MaterializedViewInfo.RefreshOption.FORCE
+            upperSql.contains("NEVER REFRESH") -> MaterializedViewInfo.RefreshOption.NEVER
+            else -> MaterializedViewInfo.RefreshOption.COMPLETE
+        }
+
+        // ENABLE QUERY REWRITE 추출
+        val enableQueryRewrite = upperSql.contains("ENABLE QUERY REWRITE")
+
+        // SELECT 쿼리 추출
+        val selectRegex = """AS\s+(SELECT.+)$""".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val selectQuery = selectRegex.find(sql)?.groupValues?.get(1)?.trim()?.trimEnd(';') ?: ""
+
+        return MaterializedViewInfo(
+            viewName = viewName,
+            selectQuery = selectQuery,
+            buildOption = buildOption,
+            refreshOption = refreshOption,
+            enableQueryRewrite = enableQueryRewrite
+        )
+    }
+
+    /**
+     * Oracle 파티션 테이블을 다른 방언으로 변환
+     */
+    fun convertPartitionTable(
+        partitionSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: com.sqlswitcher.model.ConversionOptions?
+    ): String {
+        val partitionInfo = extractTablePartitionInfo(partitionSql)
+
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                appliedRules.add("Oracle 파티션 테이블 → MySQL 형식으로 변환")
+                partitionInfo.toMySqlPartitionClause()
+            }
+            DialectType.POSTGRESQL -> {
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "PostgreSQL은 파티션을 별도의 테이블로 생성해야 합니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "각 파티션에 대해 CREATE TABLE ... PARTITION OF 구문을 사용하세요."
+                ))
+                appliedRules.add("Oracle 파티션 테이블 → PostgreSQL 형식으로 변환")
+                val mainTable = partitionInfo.toPostgreSqlPartitionClause()
+                val partitionTables = partitionInfo.toPostgreSqlPartitionTables()
+                if (partitionTables.isNotEmpty()) {
+                    "$mainTable\n\n${partitionTables.joinToString("\n\n")}"
+                } else {
+                    mainTable
+                }
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle 파티션 테이블 유지 (Tibero 호환)")
+                partitionSql
+            }
+            DialectType.ORACLE -> partitionSql
+        }
+    }
+
+    /**
+     * Oracle 파티션 정보 추출
+     */
+    private fun extractTablePartitionInfo(sql: String): TablePartitionDetailInfo {
+        val upperSql = sql.uppercase()
+
+        // 테이블명 추출
+        val tableNameRegex = """CREATE\s+TABLE\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val tableNameMatch = tableNameRegex.find(sql)
+        val tableName = tableNameMatch?.groupValues?.get(2) ?:
+            Regex("""CREATE\s+TABLE\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(sql)?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        // 파티션 타입 추출
+        val partitionType = when {
+            upperSql.contains("PARTITION BY RANGE") -> PartitionType.RANGE
+            upperSql.contains("PARTITION BY LIST") -> PartitionType.LIST
+            upperSql.contains("PARTITION BY HASH") -> PartitionType.HASH
+            else -> PartitionType.RANGE
+        }
+
+        // 파티션 컬럼 추출
+        val partitionColRegex = """PARTITION\s+BY\s+\w+\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
+        val partitionColumns = partitionColRegex.find(sql)?.groupValues?.get(1)
+            ?.split(",")?.map { it.trim().trim('"') } ?: emptyList()
+
+        // 파티션 정의 추출
+        val partitions = extractPartitionDefinitions(sql, partitionType)
+
+        // INTERVAL 추출 (Oracle 11g+ interval partitioning)
+        val intervalRegex = """INTERVAL\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
+        val intervalExpression = intervalRegex.find(sql)?.groupValues?.get(1)
+
+        return TablePartitionDetailInfo(
+            tableName = tableName,
+            partitionType = partitionType,
+            partitionColumns = partitionColumns,
+            partitions = partitions,
+            intervalExpression = intervalExpression
+        )
+    }
+
+    /**
+     * 파티션 정의 추출
+     */
+    private fun extractPartitionDefinitions(sql: String, partitionType: PartitionType): List<PartitionDefinition> {
+        val partitions = mutableListOf<PartitionDefinition>()
+
+        when (partitionType) {
+            PartitionType.RANGE -> {
+                // PARTITION name VALUES LESS THAN (value)
+                val rangeRegex = """PARTITION\s+"?(\w+)"?\s+VALUES\s+LESS\s+THAN\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
+                rangeRegex.findAll(sql).forEach { match ->
+                    partitions.add(PartitionDefinition(
+                        name = match.groupValues[1],
+                        values = match.groupValues[2].trim()
+                    ))
+                }
+            }
+            PartitionType.LIST -> {
+                // PARTITION name VALUES (value1, value2, ...)
+                val listRegex = """PARTITION\s+"?(\w+)"?\s+VALUES\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
+                listRegex.findAll(sql).forEach { match ->
+                    partitions.add(PartitionDefinition(
+                        name = match.groupValues[1],
+                        values = match.groupValues[2].trim()
+                    ))
+                }
+            }
+            PartitionType.HASH -> {
+                // PARTITION name
+                val hashRegex = """PARTITION\s+"?(\w+)"?(?:\s+TABLESPACE|\s*,|\s*\))""".toRegex(RegexOption.IGNORE_CASE)
+                hashRegex.findAll(sql).forEach { match ->
+                    partitions.add(PartitionDefinition(
+                        name = match.groupValues[1],
+                        values = ""
+                    ))
+                }
+            }
+            else -> { }
+        }
+
+        return partitions
+    }
+
+    /**
+     * Oracle JSON 함수를 다른 방언으로 변환
+     * 예: JSON_VALUE, JSON_QUERY, JSON_EXISTS, JSON_TABLE
+     */
+    fun convertJsonFunction(
+        jsonSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = jsonSql
+
+        when (targetDialect) {
+            DialectType.MYSQL -> {
+                // Oracle JSON_VALUE → MySQL JSON_EXTRACT + JSON_UNQUOTE
+                val jsonValueRegex = """JSON_VALUE\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonValueRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_VALUE → MySQL JSON_UNQUOTE(JSON_EXTRACT()) 변환")
+                    "JSON_UNQUOTE(JSON_EXTRACT($column, '\$.$path'))"
+                }
+
+                // Oracle JSON_QUERY → MySQL JSON_EXTRACT
+                val jsonQueryRegex = """JSON_QUERY\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonQueryRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_QUERY → MySQL JSON_EXTRACT 변환")
+                    "JSON_EXTRACT($column, '\$.$path')"
+                }
+
+                // Oracle JSON_EXISTS → MySQL JSON_CONTAINS_PATH
+                val jsonExistsRegex = """JSON_EXISTS\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonExistsRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_EXISTS → MySQL JSON_CONTAINS_PATH 변환")
+                    "JSON_CONTAINS_PATH($column, 'one', '\$.$path')"
+                }
+
+                // JSON_TABLE 경고
+                if (result.uppercase().contains("JSON_TABLE")) {
+                    warnings.add(createWarning(
+                        type = WarningType.UNSUPPORTED_FUNCTION,
+                        message = "Oracle JSON_TABLE은 MySQL에서 직접 지원되지 않습니다.",
+                        severity = WarningSeverity.ERROR,
+                        suggestion = "JSON_EXTRACT와 서브쿼리를 조합하여 사용하세요."
+                    ))
+                }
+            }
+            DialectType.POSTGRESQL -> {
+                // Oracle JSON_VALUE → PostgreSQL ->> operator
+                val jsonValueRegex = """JSON_VALUE\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonValueRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_VALUE → PostgreSQL ->> 연산자 변환")
+                    "$column ->> '$path'"
+                }
+
+                // Oracle JSON_QUERY → PostgreSQL -> operator
+                val jsonQueryRegex = """JSON_QUERY\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonQueryRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_QUERY → PostgreSQL -> 연산자 변환")
+                    "$column -> '$path'"
+                }
+
+                // Oracle JSON_EXISTS → PostgreSQL ? operator
+                val jsonExistsRegex = """JSON_EXISTS\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = jsonExistsRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val path = match.groupValues[2]
+                    appliedRules.add("Oracle JSON_EXISTS → PostgreSQL ? 연산자 변환")
+                    "$column ? '$path'"
+                }
+
+                // JSON_TABLE → PostgreSQL json_to_recordset 또는 jsonb_to_recordset
+                if (result.uppercase().contains("JSON_TABLE")) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Oracle JSON_TABLE은 PostgreSQL json_to_recordset으로 변환이 필요합니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "json_to_recordset() 또는 jsonb_to_recordset()을 사용하세요."
+                    ))
+                }
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle JSON 함수 유지 (Tibero 호환)")
+            }
+            DialectType.ORACLE -> { /* 변환 불필요 */ }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle 정규식 함수를 다른 방언으로 변환
+     * 예: REGEXP_LIKE, REGEXP_SUBSTR, REGEXP_REPLACE, REGEXP_INSTR, REGEXP_COUNT
+     */
+    fun convertRegexFunction(
+        regexSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = regexSql
+
+        when (targetDialect) {
+            DialectType.MYSQL -> {
+                // REGEXP_LIKE → REGEXP (MySQL은 REGEXP_LIKE 8.0+에서 지원하지만 REGEXP로도 변환 가능)
+                val regexpLikeRegex = """REGEXP_LIKE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*(?:,\s*'([^']*)'\s*)?\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpLikeRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    appliedRules.add("Oracle REGEXP_LIKE → MySQL REGEXP 변환")
+                    "$column REGEXP '$pattern'"
+                }
+
+                // REGEXP_SUBSTR → REGEXP_SUBSTR (MySQL 8.0+)
+                val regexpSubstrRegex = """REGEXP_SUBSTR\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpSubstrRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "MySQL REGEXP_SUBSTR은 8.0 이상에서만 지원됩니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "MySQL 8.0 이상을 사용하세요."
+                    ))
+                    appliedRules.add("Oracle REGEXP_SUBSTR → MySQL REGEXP_SUBSTR 변환")
+                    "REGEXP_SUBSTR($column, '$pattern')"
+                }
+
+                // REGEXP_REPLACE → REGEXP_REPLACE (MySQL 8.0+)
+                val regexpReplaceRegex = """REGEXP_REPLACE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*,\s*'([^']*)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpReplaceRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    val replacement = match.groupValues[3]
+                    appliedRules.add("Oracle REGEXP_REPLACE → MySQL REGEXP_REPLACE 변환")
+                    "REGEXP_REPLACE($column, '$pattern', '$replacement')"
+                }
+
+                // REGEXP_INSTR → REGEXP_INSTR (MySQL 8.0+)
+                val regexpInstrRegex = """REGEXP_INSTR\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpInstrRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    appliedRules.add("Oracle REGEXP_INSTR → MySQL REGEXP_INSTR 변환")
+                    "REGEXP_INSTR($column, '$pattern')"
+                }
+
+                // REGEXP_COUNT → 지원 안됨 (수동 구현 필요)
+                if (result.uppercase().contains("REGEXP_COUNT")) {
+                    warnings.add(createWarning(
+                        type = WarningType.UNSUPPORTED_FUNCTION,
+                        message = "Oracle REGEXP_COUNT는 MySQL에서 지원되지 않습니다.",
+                        severity = WarningSeverity.ERROR,
+                        suggestion = "사용자 정의 함수를 작성하거나 애플리케이션에서 처리하세요."
+                    ))
+                }
+            }
+            DialectType.POSTGRESQL -> {
+                // REGEXP_LIKE → ~ operator
+                val regexpLikeRegex = """REGEXP_LIKE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*(?:,\s*'([^']*)'\s*)?\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpLikeRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    val flags = match.groupValues.getOrNull(3) ?: ""
+                    appliedRules.add("Oracle REGEXP_LIKE → PostgreSQL ~ 연산자 변환")
+                    if (flags.contains("i", ignoreCase = true)) {
+                        "$column ~* '$pattern'"  // 대소문자 무시
+                    } else {
+                        "$column ~ '$pattern'"
+                    }
+                }
+
+                // REGEXP_SUBSTR → regexp_matches()[1]
+                val regexpSubstrRegex = """REGEXP_SUBSTR\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpSubstrRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "PostgreSQL regexp_matches는 배열을 반환합니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "(regexp_matches(column, pattern))[1] 형식을 사용하세요."
+                    ))
+                    appliedRules.add("Oracle REGEXP_SUBSTR → PostgreSQL regexp_matches 변환")
+                    "(regexp_matches($column, '$pattern'))[1]"
+                }
+
+                // REGEXP_REPLACE → regexp_replace (동일 이름)
+                val regexpReplaceRegex = """REGEXP_REPLACE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*,\s*'([^']*)'\s*(?:,\s*(\d+)\s*)?(?:,\s*(\d+)\s*)?(?:,\s*'([^']*)'\s*)?\)""".toRegex(RegexOption.IGNORE_CASE)
+                result = regexpReplaceRegex.replace(result) { match ->
+                    val column = match.groupValues[1]
+                    val pattern = match.groupValues[2]
+                    val replacement = match.groupValues[3]
+                    val flags = match.groupValues.getOrNull(6) ?: "g"  // PostgreSQL은 기본적으로 모두 대체
+                    appliedRules.add("Oracle REGEXP_REPLACE → PostgreSQL regexp_replace 변환")
+                    "regexp_replace($column, '$pattern', '$replacement', '$flags')"
+                }
+
+                // REGEXP_INSTR → 지원 안됨 (수동 구현 필요)
+                if (result.uppercase().contains("REGEXP_INSTR")) {
+                    warnings.add(createWarning(
+                        type = WarningType.UNSUPPORTED_FUNCTION,
+                        message = "Oracle REGEXP_INSTR는 PostgreSQL에서 직접 지원되지 않습니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "regexp_matches와 조합하여 구현하거나 사용자 정의 함수를 사용하세요."
+                    ))
+                }
+
+                // REGEXP_COUNT → length - length(regexp_replace(...)) 방식으로 근사
+                if (result.uppercase().contains("REGEXP_COUNT")) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Oracle REGEXP_COUNT는 PostgreSQL에서 직접 지원되지 않습니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "array_length(regexp_matches(column, pattern, 'g'), 1) 또는 사용자 정의 함수를 사용하세요."
+                    ))
+                }
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle 정규식 함수 유지 (Tibero 호환)")
+            }
+            DialectType.ORACLE -> { /* 변환 불필요 */ }
+        }
+
+        return result
+    }
+
+    /**
+     * JSON 함수 정보 추출
+     */
+    fun extractJsonFunctionInfo(jsonFuncStr: String): JsonFunctionInfo? {
+        // JSON_VALUE
+        val jsonValueRegex = """JSON_VALUE\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        jsonValueRegex.find(jsonFuncStr)?.let { match ->
+            return JsonFunctionInfo(
+                functionType = JsonFunctionInfo.JsonFunctionType.EXTRACT,
+                jsonExpression = match.groupValues[1],
+                path = match.groupValues[2]
+            )
+        }
+
+        // JSON_QUERY
+        val jsonQueryRegex = """JSON_QUERY\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        jsonQueryRegex.find(jsonFuncStr)?.let { match ->
+            return JsonFunctionInfo(
+                functionType = JsonFunctionInfo.JsonFunctionType.QUERY,
+                jsonExpression = match.groupValues[1],
+                path = match.groupValues[2]
+            )
+        }
+
+        // JSON_EXISTS
+        val jsonExistsRegex = """JSON_EXISTS\s*\(\s*(\w+)\s*,\s*'\$\.([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        jsonExistsRegex.find(jsonFuncStr)?.let { match ->
+            return JsonFunctionInfo(
+                functionType = JsonFunctionInfo.JsonFunctionType.CONTAINS,
+                jsonExpression = match.groupValues[1],
+                path = match.groupValues[2]
+            )
+        }
+
+        return null
+    }
+
+    /**
+     * 정규식 함수 정보 추출
+     */
+    fun extractRegexFunctionInfo(regexFuncStr: String): RegexFunctionInfo? {
+        // REGEXP_LIKE
+        val regexpLikeRegex = """REGEXP_LIKE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        regexpLikeRegex.find(regexFuncStr)?.let { match ->
+            return RegexFunctionInfo(
+                functionType = RegexFunctionInfo.RegexFunctionType.LIKE,
+                sourceExpression = match.groupValues[1],
+                pattern = match.groupValues[2]
+            )
+        }
+
+        // REGEXP_REPLACE
+        val regexpReplaceRegex = """REGEXP_REPLACE\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*,\s*'([^']*)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        regexpReplaceRegex.find(regexFuncStr)?.let { match ->
+            return RegexFunctionInfo(
+                functionType = RegexFunctionInfo.RegexFunctionType.REPLACE,
+                sourceExpression = match.groupValues[1],
+                pattern = match.groupValues[2],
+                replacement = match.groupValues[3]
+            )
+        }
+
+        // REGEXP_SUBSTR
+        val regexpSubstrRegex = """REGEXP_SUBSTR\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)""".toRegex(RegexOption.IGNORE_CASE)
+        regexpSubstrRegex.find(regexFuncStr)?.let { match ->
+            return RegexFunctionInfo(
+                functionType = RegexFunctionInfo.RegexFunctionType.SUBSTR,
+                sourceExpression = match.groupValues[1],
+                pattern = match.groupValues[2]
+            )
+        }
+
+        return null
+    }
+
+    // ==================== Phase 4: 트리거 변환 ====================
+
+    /**
+     * Oracle 트리거를 다른 방언으로 변환
+     */
+    fun convertTrigger(
+        triggerSql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: com.sqlswitcher.model.ConversionOptions?
+    ): String {
+        val triggerInfo = extractTriggerInfo(triggerSql)
+
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                appliedRules.add("Oracle 트리거 → MySQL 형식으로 변환")
+                convertTriggerToMySql(triggerInfo, warnings, appliedRules)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Oracle 트리거 → PostgreSQL 형식으로 변환")
+                convertTriggerToPostgreSql(triggerInfo, warnings, appliedRules)
+            }
+            DialectType.TIBERO -> {
+                appliedRules.add("Oracle 트리거 유지 (Tibero 호환)")
+                triggerSql
+            }
+            DialectType.ORACLE -> triggerSql
+        }
+    }
+
+    /**
+     * Oracle 트리거 SQL에서 TriggerInfo 추출
+     *
+     * Oracle 트리거 구문:
+     * CREATE OR REPLACE TRIGGER schema.trigger_name
+     *   BEFORE | AFTER | INSTEAD OF INSERT | UPDATE | DELETE OR ...
+     *   ON schema.table_name
+     *   REFERENCING OLD AS old NEW AS new ...
+     *   FOR EACH ROW
+     *   WHEN (condition)
+     * PL/SQL block | CALL procedure
+     */
+    private fun extractTriggerInfo(triggerSql: String): TriggerInfo {
+        val upperSql = triggerSql.uppercase()
+
+        // 트리거명 추출 (스키마.트리거명 형식 처리)
+        val triggerNameRegex = """CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val triggerNameMatch = triggerNameRegex.find(triggerSql)
+        val triggerName = triggerNameMatch?.groupValues?.get(2) ?:
+            Regex("""CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(triggerSql)?.groupValues?.get(1) ?: "UNKNOWN_TRIGGER"
+
+        // 테이블명 추출 (스키마.테이블명 형식 처리)
+        val tableNameRegex = """ON\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+        val tableNameMatch = tableNameRegex.find(triggerSql)
+        val tableName = tableNameMatch?.groupValues?.get(2) ?:
+            Regex("""ON\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                .find(triggerSql)?.groupValues?.get(1) ?: "UNKNOWN_TABLE"
+
+        // 타이밍 추출
+        val timing = when {
+            upperSql.contains("INSTEAD OF") -> TriggerInfo.TriggerTiming.INSTEAD_OF
+            upperSql.contains("BEFORE") -> TriggerInfo.TriggerTiming.BEFORE
+            upperSql.contains("AFTER") -> TriggerInfo.TriggerTiming.AFTER
+            else -> TriggerInfo.TriggerTiming.AFTER
+        }
+
+        // 이벤트 추출
+        val events = mutableListOf<TriggerInfo.TriggerEvent>()
+        if (upperSql.contains("INSERT")) events.add(TriggerInfo.TriggerEvent.INSERT)
+        if (upperSql.contains("UPDATE")) events.add(TriggerInfo.TriggerEvent.UPDATE)
+        if (upperSql.contains("DELETE")) events.add(TriggerInfo.TriggerEvent.DELETE)
+        if (events.isEmpty()) events.add(TriggerInfo.TriggerEvent.INSERT)
+
+        // FOR EACH ROW 여부
+        val forEachRow = upperSql.contains("FOR EACH ROW")
+
+        // WHEN 조건 추출
+        val whenRegex = """WHEN\s*\((.+?)\)\s*(?:BEGIN|DECLARE|CALL)""".toRegex(RegexOption.IGNORE_CASE)
+        val whenCondition = whenRegex.find(triggerSql)?.groupValues?.get(1)?.trim()
+
+        // REFERENCING 절 추출
+        val referencingRegex = """REFERENCING\s+(?:OLD\s+(?:AS\s+)?(\w+)\s+)?(?:NEW\s+(?:AS\s+)?(\w+))?""".toRegex(RegexOption.IGNORE_CASE)
+        val referencingMatch = referencingRegex.find(triggerSql)
+        val referencing = if (referencingMatch != null) {
+            TriggerInfo.ReferencingClause(
+                oldAlias = referencingMatch.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() },
+                newAlias = referencingMatch.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }
+            )
+        } else {
+            null
+        }
+
+        // 트리거 본문 추출 (BEGIN...END 또는 CALL)
+        val bodyRegex = """(BEGIN.+END\s*;?|CALL\s+\w+\s*\([^)]*\)\s*;?)""".toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val body = bodyRegex.find(triggerSql)?.groupValues?.get(1)?.trim() ?: ""
+
+        return TriggerInfo(
+            name = triggerName,
+            tableName = tableName,
+            timing = timing,
+            events = events,
+            forEachRow = forEachRow,
+            whenCondition = whenCondition,
+            body = body,
+            referencing = referencing
+        )
+    }
+
+    /**
+     * Oracle 트리거를 MySQL 형식으로 변환
+     */
+    private fun convertTriggerToMySql(
+        triggerInfo: TriggerInfo,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        // MySQL은 하나의 트리거에 하나의 이벤트만 허용
+        if (triggerInfo.events.size > 1) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL은 하나의 트리거에 하나의 이벤트만 허용합니다. 여러 트리거로 분리됩니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "각 이벤트(INSERT/UPDATE/DELETE)별로 별도의 트리거를 생성하세요."
+            ))
+        }
+
+        // MySQL은 INSTEAD OF 트리거를 지원하지 않음
+        if (triggerInfo.timing == TriggerInfo.TriggerTiming.INSTEAD_OF) {
+            warnings.add(createWarning(
+                type = WarningType.UNSUPPORTED_FUNCTION,
+                message = "MySQL은 INSTEAD OF 트리거를 지원하지 않습니다.",
+                severity = WarningSeverity.ERROR,
+                suggestion = "BEFORE 또는 AFTER 트리거로 변경하고 로직을 조정하세요."
+            ))
+        }
+
+        // WHEN 조건이 있으면 경고
+        if (!triggerInfo.whenCondition.isNullOrBlank()) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL은 WHEN 조건을 지원하지 않습니다. 트리거 본문 내 IF 문으로 변환됩니다.",
+                severity = WarningSeverity.WARNING,
+                suggestion = "트리거 본문에서 IF 조건으로 처리하세요."
+            ))
+        }
+
+        val results = mutableListOf<String>()
+
+        // 각 이벤트별로 트리거 생성
+        for (event in triggerInfo.events) {
+            val result = StringBuilder()
+
+            val triggerName = if (triggerInfo.events.size > 1) {
+                "${triggerInfo.name}_${event.name.lowercase()}"
+            } else {
+                triggerInfo.name
+            }
+
+            result.append("DELIMITER //\n\n")
+            result.append("CREATE TRIGGER `$triggerName`\n")
+
+            // 타이밍 (INSTEAD OF는 BEFORE로 변환)
+            val timingStr = when (triggerInfo.timing) {
+                TriggerInfo.TriggerTiming.BEFORE -> "BEFORE"
+                TriggerInfo.TriggerTiming.AFTER -> "AFTER"
+                TriggerInfo.TriggerTiming.INSTEAD_OF -> "BEFORE"
+            }
+
+            val eventStr = when (event) {
+                TriggerInfo.TriggerEvent.INSERT -> "INSERT"
+                TriggerInfo.TriggerEvent.UPDATE -> "UPDATE"
+                TriggerInfo.TriggerEvent.DELETE -> "DELETE"
+            }
+
+            result.append("    $timingStr $eventStr ON `${triggerInfo.tableName}`\n")
+            result.append("    FOR EACH ROW\n")
+            result.append("BEGIN\n")
+
+            // WHEN 조건을 IF 문으로 변환
+            if (!triggerInfo.whenCondition.isNullOrBlank()) {
+                val condition = convertOracleConditionToMySql(triggerInfo.whenCondition)
+                result.append("    IF $condition THEN\n")
+            }
+
+            // 본문 변환
+            if (triggerInfo.body.isNotEmpty()) {
+                val mysqlBody = convertOracleTriggerBodyToMySql(triggerInfo.body)
+                result.append("        $mysqlBody\n")
+            }
+
+            if (!triggerInfo.whenCondition.isNullOrBlank()) {
+                result.append("    END IF;\n")
+            }
+
+            result.append("END //\n\n")
+            result.append("DELIMITER ;")
+
+            results.add(result.toString())
+        }
+
+        appliedRules.add("Oracle PL/SQL → MySQL 프로시저 구문 변환")
+
+        return results.joinToString("\n\n")
+    }
+
+    /**
+     * Oracle 트리거를 PostgreSQL 형식으로 변환
+     */
+    private fun convertTriggerToPostgreSql(
+        triggerInfo: TriggerInfo,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+
+        // PostgreSQL은 트리거 함수를 먼저 정의해야 함
+        val functionName = "${triggerInfo.name}_func"
+
+        // 트리거 함수 생성
+        result.append("-- 트리거 함수 생성\n")
+        result.append("CREATE OR REPLACE FUNCTION $functionName()\n")
+        result.append("RETURNS TRIGGER AS \$\$\n")
+
+        // WHEN 조건이 있으면 본문에 포함
+        if (!triggerInfo.whenCondition.isNullOrBlank()) {
+            val pgCondition = convertOracleConditionToPostgreSql(triggerInfo.whenCondition)
+            result.append("BEGIN\n")
+            result.append("    IF $pgCondition THEN\n")
+
+            if (triggerInfo.body.isNotEmpty()) {
+                val pgBody = convertOracleTriggerBodyToPostgreSql(triggerInfo.body, triggerInfo.referencing)
+                result.append("        $pgBody\n")
+            }
+
+            result.append("    END IF;\n")
+        } else {
+            result.append("BEGIN\n")
+            if (triggerInfo.body.isNotEmpty()) {
+                val pgBody = convertOracleTriggerBodyToPostgreSql(triggerInfo.body, triggerInfo.referencing)
+                result.append("    $pgBody\n")
+            }
+        }
+
+        // RETURN 문 추가
+        if (triggerInfo.timing == TriggerInfo.TriggerTiming.BEFORE) {
+            if (triggerInfo.events.contains(TriggerInfo.TriggerEvent.DELETE)) {
+                result.append("    RETURN OLD;\n")
+            } else {
+                result.append("    RETURN NEW;\n")
+            }
+        } else {
+            result.append("    RETURN NULL;\n")
+        }
+
+        result.append("END;\n")
+        result.append("\$\$ LANGUAGE plpgsql;\n\n")
+
+        // 트리거 생성
+        result.append("-- 트리거 생성\n")
+        result.append("CREATE TRIGGER \"${triggerInfo.name}\"\n")
+
+        // 타이밍
+        val timingStr = when (triggerInfo.timing) {
+            TriggerInfo.TriggerTiming.BEFORE -> "BEFORE"
+            TriggerInfo.TriggerTiming.AFTER -> "AFTER"
+            TriggerInfo.TriggerTiming.INSTEAD_OF -> "INSTEAD OF"
+        }
+
+        // 이벤트
+        val eventsStr = triggerInfo.events.joinToString(" OR ") { event ->
+            when (event) {
+                TriggerInfo.TriggerEvent.INSERT -> "INSERT"
+                TriggerInfo.TriggerEvent.UPDATE -> "UPDATE"
+                TriggerInfo.TriggerEvent.DELETE -> "DELETE"
+            }
+        }
+
+        result.append("    $timingStr $eventsStr\n")
+        result.append("    ON \"${triggerInfo.tableName}\"\n")
+
+        if (triggerInfo.forEachRow) {
+            result.append("    FOR EACH ROW\n")
+        }
+
+        result.append("    EXECUTE FUNCTION $functionName();")
+
+        appliedRules.add("Oracle PL/SQL → PostgreSQL PL/pgSQL 변환")
+        appliedRules.add("Oracle 트리거 → PostgreSQL 트리거 함수 + 트리거 분리")
+
+        return result.toString()
+    }
+
+    /**
+     * Oracle 조건문을 MySQL 형식으로 변환
+     */
+    private fun convertOracleConditionToMySql(condition: String): String {
+        var result = condition
+
+        // :OLD. → OLD. (MySQL에서는 콜론 없음)
+        result = result.replace(Regex(""":OLD\.""", RegexOption.IGNORE_CASE), "OLD.")
+        result = result.replace(Regex(""":NEW\.""", RegexOption.IGNORE_CASE), "NEW.")
+
+        return result
+    }
+
+    /**
+     * Oracle 조건문을 PostgreSQL 형식으로 변환
+     */
+    private fun convertOracleConditionToPostgreSql(condition: String): String {
+        var result = condition
+
+        // :OLD. → OLD. (PostgreSQL에서는 콜론 없음)
+        result = result.replace(Regex(""":OLD\.""", RegexOption.IGNORE_CASE), "OLD.")
+        result = result.replace(Regex(""":NEW\.""", RegexOption.IGNORE_CASE), "NEW.")
+
+        return result
+    }
+
+    /**
+     * Oracle 트리거 본문을 MySQL 형식으로 변환
+     */
+    private fun convertOracleTriggerBodyToMySql(body: String): String {
+        var result = body
+
+        // BEGIN/END 제거 (MySQL 트리거에서 이미 BEGIN/END가 있음)
+        result = result.replace(Regex("""^\s*BEGIN\s*""", RegexOption.IGNORE_CASE), "")
+        result = result.replace(Regex("""\s*END\s*;?\s*$""", RegexOption.IGNORE_CASE), "")
+
+        // :OLD. → OLD., :NEW. → NEW.
+        result = result.replace(Regex(""":OLD\.""", RegexOption.IGNORE_CASE), "OLD.")
+        result = result.replace(Regex(""":NEW\.""", RegexOption.IGNORE_CASE), "NEW.")
+
+        // RAISE_APPLICATION_ERROR → SIGNAL SQLSTATE
+        result = result.replace(Regex("""RAISE_APPLICATION_ERROR\s*\(\s*(-?\d+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)) { match ->
+            val errorMessage = match.groupValues[2]
+            "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$errorMessage'"
+        }
+
+        // DBMS_OUTPUT.PUT_LINE → SELECT (디버깅용)
+        result = result.replace(Regex("""DBMS_OUTPUT\.PUT_LINE\s*\(\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)) { match ->
+            "SELECT '${match.groupValues[1]}'"
+        }
+
+        // SYSDATE → NOW()
+        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
+
+        // NVL → IFNULL
+        result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "IFNULL(")
+
+        return result.trim()
+    }
+
+    /**
+     * Oracle 트리거 본문을 PostgreSQL 형식으로 변환
+     */
+    private fun convertOracleTriggerBodyToPostgreSql(body: String, referencing: TriggerInfo.ReferencingClause?): String {
+        var result = body
+
+        // BEGIN/END 제거 (PostgreSQL 트리거 함수에서 이미 BEGIN/END가 있음)
+        result = result.replace(Regex("""^\s*BEGIN\s*""", RegexOption.IGNORE_CASE), "")
+        result = result.replace(Regex("""\s*END\s*;?\s*$""", RegexOption.IGNORE_CASE), "")
+
+        // :OLD. → OLD., :NEW. → NEW.
+        result = result.replace(Regex(""":OLD\.""", RegexOption.IGNORE_CASE), "OLD.")
+        result = result.replace(Regex(""":NEW\.""", RegexOption.IGNORE_CASE), "NEW.")
+
+        // REFERENCING 별칭 처리
+        if (referencing != null) {
+            referencing.oldAlias?.let { alias ->
+                result = result.replace(Regex("\\b$alias\\.", RegexOption.IGNORE_CASE), "OLD.")
+            }
+            referencing.newAlias?.let { alias ->
+                result = result.replace(Regex("\\b$alias\\.", RegexOption.IGNORE_CASE), "NEW.")
+            }
+        }
+
+        // RAISE_APPLICATION_ERROR → RAISE EXCEPTION
+        result = result.replace(Regex("""RAISE_APPLICATION_ERROR\s*\(\s*(-?\d+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)) { match ->
+            val errorMessage = match.groupValues[2]
+            "RAISE EXCEPTION '$errorMessage'"
+        }
+
+        // DBMS_OUTPUT.PUT_LINE → RAISE NOTICE
+        result = result.replace(Regex("""DBMS_OUTPUT\.PUT_LINE\s*\(\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)) { match ->
+            "RAISE NOTICE '${match.groupValues[1]}'"
+        }
+
+        // SYSDATE → CURRENT_TIMESTAMP
+        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+
+        // NVL → COALESCE
+        result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+
+        return result.trim()
+    }
 }
