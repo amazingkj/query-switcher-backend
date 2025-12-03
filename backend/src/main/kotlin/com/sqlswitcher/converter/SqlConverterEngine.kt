@@ -3,7 +3,9 @@ package com.sqlswitcher.converter
 import com.sqlswitcher.parser.SqlParserService
 import com.sqlswitcher.service.SqlMetricsService
 import com.sqlswitcher.parser.model.AstAnalysisResult
+import com.sqlswitcher.model.ConversionOptions as ModelConversionOptions
 import net.sf.jsqlparser.statement.Statement
+import net.sf.jsqlparser.statement.create.table.CreateTable
 import org.springframework.stereotype.Service
 import java.util.concurrent.ConcurrentHashMap
 
@@ -40,6 +42,25 @@ class SqlConverterEngine(
         sourceDialectType: DialectType,
         targetDialectType: DialectType,
         options: ConversionOptions = ConversionOptions()
+    ): ConversionResult {
+        return convertWithModelOptions(sql, sourceDialectType, targetDialectType, options, null)
+    }
+
+    /**
+     * SQL 쿼리를 다른 데이터베이스 방언으로 변환합니다 (모델 옵션 포함).
+     * @param sql 원본 SQL 쿼리 문자열
+     * @param sourceDialectType 원본 데이터베이스 방언 타입
+     * @param targetDialectType 타겟 데이터베이스 방언 타입
+     * @param options 변환 옵션
+     * @param modelOptions 모델 변환 옵션 (Oracle DDL 옵션 등)
+     * @return 변환 결과 (변환된 SQL, 경고, 적용된 규칙 등)
+     */
+    fun convertWithModelOptions(
+        sql: String,
+        sourceDialectType: DialectType,
+        targetDialectType: DialectType,
+        options: ConversionOptions = ConversionOptions(),
+        modelOptions: ModelConversionOptions? = null
     ): ConversionResult {
         val startTime = System.currentTimeMillis()
         val warnings = mutableListOf<ConversionWarning>()
@@ -83,7 +104,18 @@ class SqlConverterEngine(
             }
 
             // 4. 실제 변환 수행
-            val conversionResult = sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
+            // CREATE TABLE 문인 경우 옵션을 포함한 변환 수행
+            val conversionResult = if (statement is CreateTable) {
+                when (sourceDialect) {
+                    is MySqlDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
+                    is PostgreSqlDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
+                    is TiberoDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
+                    is OracleDialect -> sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
+                    else -> sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
+                }
+            } else {
+                sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
+            }
 
             warnings.addAll(conversionResult.warnings)
             appliedRules.addAll(conversionResult.appliedRules)
@@ -101,16 +133,16 @@ class SqlConverterEngine(
         } catch (e: Exception) {
             val endTime = System.currentTimeMillis()
             val duration = endTime - startTime
-            
+
             warnings.add(createWarning(
                 type = WarningType.UNSUPPORTED_FUNCTION,
                 message = "변환 중 오류가 발생했습니다: ${e.message}",
                 severity = WarningSeverity.ERROR,
                 suggestion = "SQL 구문을 확인하고 다시 시도해보세요."
             ))
-            
+
             sqlMetricsService.recordConversionError(sourceDialectType.name, targetDialectType.name, "ConversionError")
-            
+
             ConversionResult(
                 convertedSql = sql,
                 warnings = warnings,

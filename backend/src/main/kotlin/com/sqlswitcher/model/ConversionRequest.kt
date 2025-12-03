@@ -23,5 +23,13 @@ data class ConversionOptions(
     val strictMode: Boolean = false,
     val enableComments: Boolean = true,
     val formatSql: Boolean = false,
-    val replaceUnsupportedFunctions: Boolean = false
+    val replaceUnsupportedFunctions: Boolean = false,
+
+    // Oracle DDL 변환 옵션
+    val oracleSchemaOwner: String? = null,        // 스키마/오너명
+    val oracleTablespace: String? = null,         // 테이블 TABLESPACE
+    val oracleIndexspace: String? = null,         // 인덱스 TABLESPACE
+    val separatePrimaryKey: Boolean = true,       // PRIMARY KEY를 별도 ALTER TABLE로 분리
+    val separateComments: Boolean = true,         // COMMENT를 별도 문으로 분리
+    val generateIndex: Boolean = true             // UNIQUE INDEX 생성 포함
 )

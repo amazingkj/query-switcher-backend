@@ -52,11 +52,12 @@ class SqlConversionService(
 
             for (sqlStatement in sqlStatements) {
                 try {
-                    val conversionResult = sqlConverterEngine.convert(
+                    val conversionResult = sqlConverterEngine.convertWithModelOptions(
                         sql = sqlStatement,
                         sourceDialectType = request.sourceDialect,
                         targetDialectType = request.targetDialect,
-                        options = conversionOptions
+                        options = conversionOptions,
+                        modelOptions = request.options
                     )
                     convertedStatements.add(conversionResult.convertedSql)
                     allWarnings.addAll(conversionResult.warnings)

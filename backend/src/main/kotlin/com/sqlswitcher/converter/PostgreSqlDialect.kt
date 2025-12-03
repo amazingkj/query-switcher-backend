@@ -1,6 +1,7 @@
 package com.sqlswitcher.converter
 
 import com.sqlswitcher.parser.model.AstAnalysisResult
+import com.sqlswitcher.model.ConversionOptions
 import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
 import net.sf.jsqlparser.statement.select.PlainSelect
@@ -9,6 +10,7 @@ import net.sf.jsqlparser.statement.select.Limit
 import net.sf.jsqlparser.statement.select.Offset
 import net.sf.jsqlparser.statement.select.Top
 import net.sf.jsqlparser.statement.select.Fetch
+import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -54,12 +56,32 @@ class PostgreSqlDialect : AbstractDatabaseDialect() {
         targetDialect: DialectType,
         analysisResult: AstAnalysisResult
     ): ConversionResult {
+        return performConversionWithOptions(statement, targetDialect, analysisResult, null)
+    }
+
+    /**
+     * 옵션을 포함한 변환 수행
+     */
+    fun performConversionWithOptions(
+        statement: Statement,
+        targetDialect: DialectType,
+        analysisResult: AstAnalysisResult,
+        options: ConversionOptions?
+    ): ConversionResult {
         val warnings = mutableListOf<ConversionWarning>()
         val appliedRules = mutableListOf<String>()
-        
+
         when (statement) {
             is Select -> {
                 val convertedSql = convertSelectStatement(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is CreateTable -> {
+                val convertedSql = convertCreateTable(statement, targetDialect, warnings, appliedRules, options)
                 return ConversionResult(
                     convertedSql = convertedSql,
                     warnings = warnings,
@@ -453,5 +475,295 @@ class PostgreSqlDialect : AbstractDatabaseDialect() {
     override fun convertToTiberoDataType(dataType: String): String {
         // Tibero는 Oracle과 유사하므로 동일한 변환 규칙 사용
         return convertToOracleDataType(dataType)
+    }
+
+    /**
+     * PostgreSQL CREATE TABLE을 다른 방언으로 변환
+     */
+    private fun convertCreateTable(
+        createTable: CreateTable,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                convertCreateTableToOracle(createTable, targetDialect, warnings, appliedRules, options)
+            }
+            DialectType.MYSQL -> {
+                convertCreateTableToMySql(createTable, warnings, appliedRules)
+            }
+            else -> createTable.toString()
+        }
+    }
+
+    /**
+     * PostgreSQL CREATE TABLE을 Oracle/Tibero DDL 형식으로 변환
+     */
+    private fun convertCreateTableToOracle(
+        createTable: CreateTable,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        options: ConversionOptions?
+    ): String {
+        val schemaOwner = options?.oracleSchemaOwner ?: "SCHEMA_OWNER"
+        val tablespace = options?.oracleTablespace ?: "TABLESPACE_NAME"
+        val indexspace = options?.oracleIndexspace ?: "INDEXSPACE_NAME"
+        val separatePk = options?.separatePrimaryKey ?: true
+        val separateComments = options?.separateComments ?: true
+        val generateIndex = options?.generateIndex ?: true
+
+        val result = StringBuilder()
+        val columnComments = mutableListOf<Triple<String, String, String>>()
+        var primaryKeyColumns: List<String>? = null
+        var primaryKeyName: String? = null
+
+        // 테이블명 추출
+        val rawTableName = createTable.table.name.trim('"')
+        val fullTableName = "\"$schemaOwner\".\"$rawTableName\""
+
+        // PRIMARY KEY 정보 추출
+        createTable.indexes?.forEach { index ->
+            if (index.type?.uppercase() == "PRIMARY KEY" || index.toString().uppercase().contains("PRIMARY KEY")) {
+                primaryKeyColumns = index.columnsNames?.map { it.trim('"') }
+                primaryKeyName = "PK_${rawTableName.removePrefix("TB_").removePrefix("T_")}"
+            }
+        }
+
+        // CREATE TABLE 시작
+        result.appendLine("CREATE TABLE $fullTableName")
+        result.appendLine("(")
+
+        // 컬럼 정의 변환
+        val columnDefs = mutableListOf<String>()
+        createTable.columnDefinitions?.forEach { colDef ->
+            val columnName = colDef.columnName.trim('"')
+            val oracleColumnName = "\"$columnName\""
+
+            // 데이터 타입 변환
+            val pgType = colDef.colDataType?.dataType?.uppercase() ?: "VARCHAR"
+            val typeArgs = colDef.colDataType?.argumentsStringList
+
+            val oracleType = convertPostgreSqlTypeToOracle(pgType, typeArgs)
+
+            // NOT NULL 등 제약조건 추출
+            val constraints = mutableListOf<String>()
+
+            colDef.columnSpecs?.forEach { spec ->
+                val specStr = spec.toString().uppercase()
+                when {
+                    specStr == "NOT" -> {}
+                    specStr == "NULL" && constraints.lastOrNull() == "NOT" -> {
+                        constraints.remove("NOT")
+                        constraints.add("NOT NULL")
+                    }
+                    specStr == "NULL" -> {}
+                    specStr.startsWith("DEFAULT") -> constraints.add(spec.toString())
+                    specStr == "PRIMARY" || specStr == "KEY" -> {}
+                    else -> {}
+                }
+            }
+
+            val constraintStr = if (constraints.isNotEmpty()) " ${constraints.joinToString(" ")}" else ""
+            columnDefs.add("    $oracleColumnName $oracleType$constraintStr")
+        }
+
+        result.appendLine(columnDefs.joinToString(",\n"))
+        result.append(") TABLESPACE \"$tablespace\"")
+        result.appendLine(";")
+
+        appliedRules.add("CREATE TABLE PostgreSQL → Oracle 형식으로 변환")
+        appliedRules.add("데이터 타입 Oracle 형식으로 변환")
+
+        // PRIMARY KEY 인덱스 및 제약조건 생성
+        if (separatePk && primaryKeyColumns != null && primaryKeyColumns!!.isNotEmpty()) {
+            result.appendLine()
+
+            val pkColumnsQuoted = primaryKeyColumns!!.joinToString(", ") { "\"$it\"" }
+
+            if (generateIndex) {
+                result.appendLine("CREATE UNIQUE INDEX \"$schemaOwner\".\"$primaryKeyName\" ON \"$schemaOwner\".\"$rawTableName\" ($pkColumnsQuoted)")
+                result.appendLine("    TABLESPACE \"$indexspace\" ;")
+                result.appendLine()
+            }
+
+            result.appendLine("ALTER TABLE \"$schemaOwner\".\"$rawTableName\" ADD CONSTRAINT \"$primaryKeyName\" PRIMARY KEY ($pkColumnsQuoted)")
+            if (generateIndex) {
+                result.appendLine("    USING INDEX \"$schemaOwner\".\"$primaryKeyName\" ENABLE;")
+            } else {
+                result.appendLine("    ENABLE;")
+            }
+
+            appliedRules.add("PRIMARY KEY를 별도 ALTER TABLE로 분리")
+        }
+
+        return result.toString().trim()
+    }
+
+    /**
+     * PostgreSQL CREATE TABLE을 MySQL 형식으로 변환
+     */
+    private fun convertCreateTableToMySql(
+        createTable: CreateTable,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+
+        // 테이블명 변환 (큰따옴표 → 백틱)
+        val rawTableName = createTable.table.name.trim('"')
+        result.append("CREATE TABLE `$rawTableName` (\n")
+
+        // 컬럼 정의 변환
+        val columnDefs = mutableListOf<String>()
+        createTable.columnDefinitions?.forEach { colDef ->
+            val columnName = colDef.columnName.trim('"')
+
+            // 데이터 타입 변환
+            val pgType = colDef.colDataType?.dataType?.uppercase() ?: "VARCHAR"
+            val typeArgs = colDef.colDataType?.argumentsStringList
+
+            val mysqlType = convertPostgreSqlTypeToMySql(pgType, typeArgs, warnings)
+
+            // 제약조건 추출
+            val constraints = mutableListOf<String>()
+            colDef.columnSpecs?.forEach { spec ->
+                val specStr = spec.toString().uppercase()
+                when {
+                    specStr == "NOT" -> {}
+                    specStr == "NULL" && constraints.lastOrNull() == "NOT" -> {
+                        constraints.remove("NOT")
+                        constraints.add("NOT NULL")
+                    }
+                    specStr == "NULL" -> {}
+                    specStr.startsWith("DEFAULT") -> constraints.add(spec.toString())
+                    else -> {}
+                }
+            }
+
+            val constraintStr = if (constraints.isNotEmpty()) " ${constraints.joinToString(" ")}" else ""
+            columnDefs.add("    `$columnName` $mysqlType$constraintStr")
+        }
+
+        // PRIMARY KEY 추가
+        createTable.indexes?.forEach { index ->
+            if (index.type?.uppercase() == "PRIMARY KEY" || index.toString().uppercase().contains("PRIMARY KEY")) {
+                val pkColumns = index.columnsNames?.joinToString(", ") { "`${it.trim('"')}`" }
+                if (pkColumns != null) {
+                    columnDefs.add("    PRIMARY KEY ($pkColumns)")
+                }
+            }
+        }
+
+        result.appendLine(columnDefs.joinToString(",\n"))
+        result.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+        appliedRules.add("CREATE TABLE PostgreSQL → MySQL 형식으로 변환")
+        appliedRules.add("큰따옴표(\") → 백틱(`) 변환")
+        appliedRules.add("데이터 타입 MySQL 형식으로 변환")
+
+        return result.toString()
+    }
+
+    /**
+     * PostgreSQL 데이터 타입을 Oracle 데이터 타입으로 변환
+     */
+    private fun convertPostgreSqlTypeToOracle(pgType: String, args: List<String>?): String {
+        val precision = args?.firstOrNull()?.toIntOrNull()
+        val scale = args?.getOrNull(1)?.toIntOrNull()
+
+        return when (pgType.uppercase()) {
+            "SERIAL" -> "NUMBER GENERATED BY DEFAULT AS IDENTITY"
+            "BIGSERIAL" -> "NUMBER GENERATED BY DEFAULT AS IDENTITY"
+            "SMALLSERIAL" -> "NUMBER(5) GENERATED BY DEFAULT AS IDENTITY"
+            "INTEGER", "INT", "INT4" -> "NUMBER(10)"
+            "BIGINT", "INT8" -> "NUMBER(19)"
+            "SMALLINT", "INT2" -> "NUMBER(5)"
+            "NUMERIC", "DECIMAL" -> {
+                when {
+                    precision != null && scale != null -> "NUMBER($precision,$scale)"
+                    precision != null -> "NUMBER($precision)"
+                    else -> "NUMBER"
+                }
+            }
+            "REAL", "FLOAT4" -> "BINARY_FLOAT"
+            "DOUBLE PRECISION", "FLOAT8" -> "BINARY_DOUBLE"
+            "VARCHAR", "CHARACTER VARYING" -> {
+                val size = precision ?: 255
+                "VARCHAR2($size BYTE)"
+            }
+            "CHAR", "CHARACTER" -> {
+                val size = precision ?: 1
+                "CHAR($size BYTE)"
+            }
+            "TEXT" -> "CLOB"
+            "BYTEA" -> "BLOB"
+            "BOOLEAN", "BOOL" -> "NUMBER(1)"
+            "DATE" -> "DATE"
+            "TIME" -> "TIMESTAMP"
+            "TIMESTAMP", "TIMESTAMPTZ" -> if (precision != null) "TIMESTAMP($precision)" else "TIMESTAMP"
+            "UUID" -> "RAW(16)"
+            "JSON", "JSONB" -> "CLOB"
+            "INTERVAL" -> "VARCHAR2(50 BYTE)"
+            else -> pgType
+        }
+    }
+
+    /**
+     * PostgreSQL 데이터 타입을 MySQL 데이터 타입으로 변환
+     */
+    private fun convertPostgreSqlTypeToMySql(
+        pgType: String,
+        args: List<String>?,
+        warnings: MutableList<ConversionWarning>
+    ): String {
+        val precision = args?.firstOrNull()?.toIntOrNull()
+        val scale = args?.getOrNull(1)?.toIntOrNull()
+
+        return when (pgType.uppercase()) {
+            "SERIAL" -> {
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "PostgreSQL SERIAL은 MySQL AUTO_INCREMENT로 변환됩니다.",
+                    severity = WarningSeverity.INFO,
+                    suggestion = "INT AUTO_INCREMENT를 사용하세요."
+                ))
+                "INT AUTO_INCREMENT"
+            }
+            "BIGSERIAL" -> "BIGINT AUTO_INCREMENT"
+            "SMALLSERIAL" -> "SMALLINT AUTO_INCREMENT"
+            "INTEGER", "INT", "INT4" -> "INT"
+            "BIGINT", "INT8" -> "BIGINT"
+            "SMALLINT", "INT2" -> "SMALLINT"
+            "NUMERIC", "DECIMAL" -> {
+                when {
+                    precision != null && scale != null -> "DECIMAL($precision,$scale)"
+                    precision != null -> "DECIMAL($precision)"
+                    else -> "DECIMAL"
+                }
+            }
+            "REAL", "FLOAT4" -> "FLOAT"
+            "DOUBLE PRECISION", "FLOAT8" -> "DOUBLE"
+            "VARCHAR", "CHARACTER VARYING" -> {
+                val size = precision ?: 255
+                "VARCHAR($size)"
+            }
+            "CHAR", "CHARACTER" -> {
+                val size = precision ?: 1
+                "CHAR($size)"
+            }
+            "TEXT" -> "LONGTEXT"
+            "BYTEA" -> "LONGBLOB"
+            "BOOLEAN", "BOOL" -> "BOOLEAN"
+            "DATE" -> "DATE"
+            "TIME" -> "TIME"
+            "TIMESTAMP", "TIMESTAMPTZ" -> if (precision != null && precision > 0) "DATETIME($precision)" else "DATETIME"
+            "UUID" -> "CHAR(36)"
+            "JSON", "JSONB" -> "JSON"
+            "INTERVAL" -> "VARCHAR(50)"
+            else -> pgType
+        }
     }
 }

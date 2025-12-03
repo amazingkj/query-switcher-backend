@@ -1,6 +1,7 @@
 package com.sqlswitcher.converter
 
 import com.sqlswitcher.parser.model.AstAnalysisResult
+import com.sqlswitcher.model.ConversionOptions
 import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
 import net.sf.jsqlparser.statement.select.PlainSelect
@@ -9,6 +10,7 @@ import net.sf.jsqlparser.statement.select.Limit
 import net.sf.jsqlparser.statement.select.Offset
 import net.sf.jsqlparser.statement.select.Top
 import net.sf.jsqlparser.statement.select.Fetch
+import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.expression.Function as SqlFunction
 import net.sf.jsqlparser.expression.StringValue
 import net.sf.jsqlparser.expression.Expression
@@ -54,12 +56,32 @@ class TiberoDialect : AbstractDatabaseDialect() {
         targetDialect: DialectType,
         analysisResult: AstAnalysisResult
     ): ConversionResult {
+        return performConversionWithOptions(statement, targetDialect, analysisResult, null)
+    }
+
+    /**
+     * 옵션을 포함한 변환 수행
+     */
+    fun performConversionWithOptions(
+        statement: Statement,
+        targetDialect: DialectType,
+        analysisResult: AstAnalysisResult,
+        options: ConversionOptions?
+    ): ConversionResult {
         val warnings = mutableListOf<ConversionWarning>()
         val appliedRules = mutableListOf<String>()
-        
+
         when (statement) {
             is Select -> {
                 val convertedSql = convertSelectStatement(statement, targetDialect, warnings, appliedRules)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+            is CreateTable -> {
+                val convertedSql = convertCreateTable(statement, targetDialect, warnings, appliedRules)
                 return ConversionResult(
                     convertedSql = convertedSql,
                     warnings = warnings,
@@ -458,6 +480,247 @@ class TiberoDialect : AbstractDatabaseDialect() {
     }
     
     override fun convertToOracleDataType(dataType: String): String = dataType
-    
+
     override fun convertToTiberoDataType(dataType: String): String = dataType
+
+    /**
+     * Tibero CREATE TABLE을 다른 방언으로 변환
+     */
+    private fun convertCreateTable(
+        createTable: CreateTable,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.MYSQL -> {
+                convertCreateTableToMySql(createTable, warnings, appliedRules)
+            }
+            DialectType.POSTGRESQL -> {
+                convertCreateTableToPostgreSql(createTable, warnings, appliedRules)
+            }
+            DialectType.ORACLE -> {
+                // Tibero와 Oracle은 거의 동일한 구문 사용
+                appliedRules.add("Tibero CREATE TABLE 구문 유지 (Oracle 호환)")
+                createTable.toString()
+            }
+            else -> createTable.toString()
+        }
+    }
+
+    /**
+     * Tibero CREATE TABLE을 MySQL 형식으로 변환
+     */
+    private fun convertCreateTableToMySql(
+        createTable: CreateTable,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+
+        // 테이블명 변환 (큰따옴표 → 백틱)
+        val rawTableName = createTable.table.name.trim('"')
+        result.append("CREATE TABLE `$rawTableName` (\n")
+
+        // 컬럼 정의 변환
+        val columnDefs = mutableListOf<String>()
+        createTable.columnDefinitions?.forEach { colDef ->
+            val columnName = colDef.columnName.trim('"')
+
+            // 데이터 타입 변환
+            val tiberoType = colDef.colDataType?.dataType?.uppercase() ?: "VARCHAR2"
+            val typeArgs = colDef.colDataType?.argumentsStringList
+
+            val mysqlType = convertTiberoTypeToMySql(tiberoType, typeArgs)
+
+            // 제약조건 추출
+            val constraints = mutableListOf<String>()
+            colDef.columnSpecs?.forEach { spec ->
+                val specStr = spec.toString().uppercase()
+                when {
+                    specStr == "NOT" -> {}
+                    specStr == "NULL" && constraints.lastOrNull() == "NOT" -> {
+                        constraints.remove("NOT")
+                        constraints.add("NOT NULL")
+                    }
+                    specStr == "NULL" -> {}
+                    specStr.startsWith("DEFAULT") -> constraints.add(spec.toString())
+                    else -> {}
+                }
+            }
+
+            val constraintStr = if (constraints.isNotEmpty()) " ${constraints.joinToString(" ")}" else ""
+            columnDefs.add("    `$columnName` $mysqlType$constraintStr")
+        }
+
+        // PRIMARY KEY 추가
+        createTable.indexes?.forEach { index ->
+            if (index.type?.uppercase() == "PRIMARY KEY" || index.toString().uppercase().contains("PRIMARY KEY")) {
+                val pkColumns = index.columnsNames?.joinToString(", ") { "`${it.trim('"')}`" }
+                if (pkColumns != null) {
+                    columnDefs.add("    PRIMARY KEY ($pkColumns)")
+                }
+            }
+        }
+
+        result.appendLine(columnDefs.joinToString(",\n"))
+        result.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+        appliedRules.add("CREATE TABLE Tibero → MySQL 형식으로 변환")
+        appliedRules.add("큰따옴표(\") → 백틱(`) 변환")
+        appliedRules.add("데이터 타입 MySQL 형식으로 변환")
+
+        return result.toString()
+    }
+
+    /**
+     * Tibero CREATE TABLE을 PostgreSQL 형식으로 변환
+     */
+    private fun convertCreateTableToPostgreSql(
+        createTable: CreateTable,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val result = StringBuilder()
+
+        // 테이블명 (큰따옴표 유지)
+        val rawTableName = createTable.table.name.trim('"')
+        result.append("CREATE TABLE \"$rawTableName\" (\n")
+
+        // 컬럼 정의 변환
+        val columnDefs = mutableListOf<String>()
+        createTable.columnDefinitions?.forEach { colDef ->
+            val columnName = colDef.columnName.trim('"')
+
+            // 데이터 타입 변환
+            val tiberoType = colDef.colDataType?.dataType?.uppercase() ?: "VARCHAR2"
+            val typeArgs = colDef.colDataType?.argumentsStringList
+
+            val pgType = convertTiberoTypeToPostgreSql(tiberoType, typeArgs)
+
+            // 제약조건 추출
+            val constraints = mutableListOf<String>()
+            colDef.columnSpecs?.forEach { spec ->
+                val specStr = spec.toString().uppercase()
+                when {
+                    specStr == "NOT" -> {}
+                    specStr == "NULL" && constraints.lastOrNull() == "NOT" -> {
+                        constraints.remove("NOT")
+                        constraints.add("NOT NULL")
+                    }
+                    specStr == "NULL" -> {}
+                    specStr.startsWith("DEFAULT") -> constraints.add(spec.toString())
+                    else -> {}
+                }
+            }
+
+            val constraintStr = if (constraints.isNotEmpty()) " ${constraints.joinToString(" ")}" else ""
+            columnDefs.add("    \"$columnName\" $pgType$constraintStr")
+        }
+
+        // PRIMARY KEY 추가
+        createTable.indexes?.forEach { index ->
+            if (index.type?.uppercase() == "PRIMARY KEY" || index.toString().uppercase().contains("PRIMARY KEY")) {
+                val pkColumns = index.columnsNames?.joinToString(", ") { "\"${it.trim('"')}\"" }
+                if (pkColumns != null) {
+                    columnDefs.add("    PRIMARY KEY ($pkColumns)")
+                }
+            }
+        }
+
+        result.appendLine(columnDefs.joinToString(",\n"))
+        result.append(")")
+
+        appliedRules.add("CREATE TABLE Tibero → PostgreSQL 형식으로 변환")
+        appliedRules.add("데이터 타입 PostgreSQL 형식으로 변환")
+
+        return result.toString()
+    }
+
+    /**
+     * Tibero 데이터 타입을 MySQL 데이터 타입으로 변환
+     */
+    private fun convertTiberoTypeToMySql(tiberoType: String, args: List<String>?): String {
+        val precision = args?.firstOrNull()?.toIntOrNull()
+        val scale = args?.getOrNull(1)?.toIntOrNull()
+
+        return when (tiberoType.uppercase()) {
+            "NUMBER" -> {
+                when {
+                    precision != null && scale != null -> "DECIMAL($precision,$scale)"
+                    precision != null -> "DECIMAL($precision)"
+                    else -> "DECIMAL"
+                }
+            }
+            "VARCHAR2" -> {
+                val size = precision ?: 255
+                "VARCHAR($size)"
+            }
+            "CHAR" -> {
+                val size = precision ?: 1
+                "CHAR($size)"
+            }
+            "CLOB" -> "LONGTEXT"
+            "BLOB" -> "LONGBLOB"
+            "RAW" -> {
+                val size = precision ?: 255
+                "VARBINARY($size)"
+            }
+            "LONG RAW" -> "LONGBLOB"
+            "DATE" -> "DATETIME"
+            "TIMESTAMP" -> if (precision != null) "DATETIME($precision)" else "DATETIME"
+            "TIMESTAMP WITH TIME ZONE" -> "DATETIME"
+            "TIMESTAMP WITH LOCAL TIME ZONE" -> "DATETIME"
+            "INTERVAL YEAR TO MONTH" -> "VARCHAR(20)"
+            "INTERVAL DAY TO SECOND" -> "VARCHAR(30)"
+            "ROWID" -> "VARCHAR(18)"
+            "UROWID" -> "VARCHAR(4000)"
+            "XMLType" -> "LONGTEXT"
+            "BINARY_FLOAT" -> "FLOAT"
+            "BINARY_DOUBLE" -> "DOUBLE"
+            else -> tiberoType
+        }
+    }
+
+    /**
+     * Tibero 데이터 타입을 PostgreSQL 데이터 타입으로 변환
+     */
+    private fun convertTiberoTypeToPostgreSql(tiberoType: String, args: List<String>?): String {
+        val precision = args?.firstOrNull()?.toIntOrNull()
+        val scale = args?.getOrNull(1)?.toIntOrNull()
+
+        return when (tiberoType.uppercase()) {
+            "NUMBER" -> {
+                when {
+                    precision != null && scale != null -> "NUMERIC($precision,$scale)"
+                    precision != null -> "NUMERIC($precision)"
+                    else -> "NUMERIC"
+                }
+            }
+            "VARCHAR2" -> {
+                val size = precision ?: 255
+                "VARCHAR($size)"
+            }
+            "CHAR" -> {
+                val size = precision ?: 1
+                "CHAR($size)"
+            }
+            "CLOB" -> "TEXT"
+            "BLOB" -> "BYTEA"
+            "RAW" -> "BYTEA"
+            "LONG RAW" -> "BYTEA"
+            "DATE" -> "TIMESTAMP"
+            "TIMESTAMP" -> if (precision != null) "TIMESTAMP($precision)" else "TIMESTAMP"
+            "TIMESTAMP WITH TIME ZONE" -> "TIMESTAMPTZ"
+            "TIMESTAMP WITH LOCAL TIME ZONE" -> "TIMESTAMP"
+            "INTERVAL YEAR TO MONTH" -> "INTERVAL"
+            "INTERVAL DAY TO SECOND" -> "INTERVAL"
+            "ROWID" -> "VARCHAR(18)"
+            "UROWID" -> "VARCHAR(4000)"
+            "XMLType" -> "XML"
+            "BINARY_FLOAT" -> "REAL"
+            "BINARY_DOUBLE" -> "DOUBLE PRECISION"
+            else -> tiberoType
+        }
+    }
 }
