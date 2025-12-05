@@ -668,81 +668,6 @@ data class ProcedureInfo(
 }
 
 /**
- * SEQUENCE 정보
- */
-data class SequenceInfo(
-    val name: String,
-    val startWith: Long = 1,
-    val incrementBy: Long = 1,
-    val minValue: Long? = null,
-    val maxValue: Long? = null,
-    val cache: Int = 20,
-    val cycle: Boolean = false
-) {
-    /**
-     * Oracle SEQUENCE 생성
-     */
-    fun toOracle(schemaOwner: String): String {
-        val sb = StringBuilder()
-        sb.append("CREATE SEQUENCE \"$schemaOwner\".\"$name\"")
-        sb.appendLine()
-        sb.append("    START WITH $startWith")
-        sb.appendLine()
-        sb.append("    INCREMENT BY $incrementBy")
-        minValue?.let { sb.appendLine(); sb.append("    MINVALUE $it") }
-        maxValue?.let { sb.appendLine(); sb.append("    MAXVALUE $it") }
-        if (cache > 1) {
-            sb.appendLine()
-            sb.append("    CACHE $cache")
-        }
-        if (cycle) {
-            sb.appendLine()
-            sb.append("    CYCLE")
-        }
-        return sb.toString()
-    }
-
-    /**
-     * PostgreSQL SEQUENCE 생성
-     */
-    fun toPostgreSql(): String {
-        val sb = StringBuilder()
-        sb.append("CREATE SEQUENCE \"$name\"")
-        sb.appendLine()
-        sb.append("    START WITH $startWith")
-        sb.appendLine()
-        sb.append("    INCREMENT BY $incrementBy")
-        minValue?.let { sb.appendLine(); sb.append("    MINVALUE $it") }
-        maxValue?.let { sb.appendLine(); sb.append("    MAXVALUE $it") }
-        if (cache > 1) {
-            sb.appendLine()
-            sb.append("    CACHE $cache")
-        }
-        if (cycle) {
-            sb.appendLine()
-            sb.append("    CYCLE")
-        }
-        return sb.toString()
-    }
-
-    /**
-     * MySQL용 AUTO_INCREMENT 시뮬레이션 테이블 생성
-     * MySQL 8.0 이전에서는 SEQUENCE를 직접 지원하지 않음
-     */
-    fun toMySqlSimulation(): String {
-        return """
--- MySQL은 SEQUENCE를 직접 지원하지 않습니다.
--- AUTO_INCREMENT 컬럼을 사용하거나 아래 시뮬레이션 테이블을 사용하세요.
-CREATE TABLE `${name}_seq` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY
-) ENGINE=InnoDB AUTO_INCREMENT=$startWith;
-
--- 다음 값 가져오기: INSERT INTO `${name}_seq` VALUES (NULL); SELECT LAST_INSERT_ID();
-        """.trimIndent()
-    }
-}
-
-/**
  * 재귀 CTE (WITH RECURSIVE) 정보
  */
 data class RecursiveCteInfo(
@@ -2235,5 +2160,271 @@ data class DatabaseLinkInfo(
         sb.append("-- CONNECTION='mysql://${username ?: "user"}:****@hostname:3306/dbname/table_name';")
 
         return sb.toString()
+    }
+}
+
+/**
+ * 시퀀스 정보
+ */
+data class SequenceInfo(
+    val name: String,
+    val startWith: Long = 1,
+    val incrementBy: Long = 1,
+    val minValue: Long? = null,
+    val maxValue: Long? = null,
+    val cache: Long? = null,
+    val cycle: Boolean = false,
+    val order: Boolean = false         // Oracle 전용 (RAC 환경)
+) {
+    /**
+     * Oracle 시퀀스 생성
+     */
+    fun toOracle(schemaOwner: String): String {
+        val sb = StringBuilder()
+        sb.append("CREATE SEQUENCE \"$schemaOwner\".\"$name\"")
+
+        if (startWith != 1L) {
+            sb.append("\n    START WITH $startWith")
+        }
+        if (incrementBy != 1L) {
+            sb.append("\n    INCREMENT BY $incrementBy")
+        }
+        minValue?.let {
+            sb.append("\n    MINVALUE $it")
+        } ?: sb.append("\n    NOMINVALUE")
+
+        maxValue?.let {
+            sb.append("\n    MAXVALUE $it")
+        } ?: sb.append("\n    NOMAXVALUE")
+
+        cache?.let {
+            if (it > 1) sb.append("\n    CACHE $it")
+            else sb.append("\n    NOCACHE")
+        } ?: sb.append("\n    NOCACHE")
+
+        if (cycle) {
+            sb.append("\n    CYCLE")
+        } else {
+            sb.append("\n    NOCYCLE")
+        }
+
+        if (order) {
+            sb.append("\n    ORDER")
+        } else {
+            sb.append("\n    NOORDER")
+        }
+
+        sb.append(";")
+        return sb.toString()
+    }
+
+    /**
+     * PostgreSQL 시퀀스 생성
+     */
+    fun toPostgreSql(): String {
+        val sb = StringBuilder()
+        sb.append("CREATE SEQUENCE \"$name\"")
+
+        sb.append("\n    START WITH $startWith")
+        sb.append("\n    INCREMENT BY $incrementBy")
+
+        minValue?.let {
+            sb.append("\n    MINVALUE $it")
+        } ?: sb.append("\n    NO MINVALUE")
+
+        maxValue?.let {
+            sb.append("\n    MAXVALUE $it")
+        } ?: sb.append("\n    NO MAXVALUE")
+
+        cache?.let {
+            if (it > 1) sb.append("\n    CACHE $it")
+        }
+
+        if (cycle) {
+            sb.append("\n    CYCLE")
+        } else {
+            sb.append("\n    NO CYCLE")
+        }
+
+        sb.append(";")
+        return sb.toString()
+    }
+
+    /**
+     * MySQL 시퀀스 (AUTO_INCREMENT 테이블 또는 시퀀스 테이블 시뮬레이션)
+     * MySQL 8.0+는 시퀀스를 지원하지 않으므로 테이블로 시뮬레이션
+     */
+    fun toMySql(warnings: MutableList<ConversionWarning>): String {
+        warnings.add(ConversionWarning(
+            type = WarningType.SYNTAX_DIFFERENCE,
+            message = "MySQL은 시퀀스를 직접 지원하지 않습니다. 시퀀스 테이블로 시뮬레이션됩니다.",
+            severity = WarningSeverity.INFO,
+            suggestion = "AUTO_INCREMENT를 사용하거나 시퀀스 테이블 + 함수로 구현하세요."
+        ))
+
+        val sb = StringBuilder()
+        sb.appendLine("-- MySQL 시퀀스 시뮬레이션 (테이블 + 함수)")
+        sb.appendLine()
+        sb.appendLine("-- 1. 시퀀스 테이블 생성")
+        sb.appendLine("CREATE TABLE IF NOT EXISTS `seq_$name` (")
+        sb.appendLine("    `current_value` BIGINT NOT NULL,")
+        sb.appendLine("    `increment_by` BIGINT NOT NULL DEFAULT $incrementBy")
+        sb.appendLine(") ENGINE=InnoDB;")
+        sb.appendLine()
+        sb.appendLine("-- 초기값 설정")
+        sb.appendLine("INSERT INTO `seq_$name` (`current_value`, `increment_by`) VALUES (${startWith - incrementBy}, $incrementBy);")
+        sb.appendLine()
+        sb.appendLine("-- 2. NEXTVAL 함수")
+        sb.appendLine("DELIMITER //")
+        sb.appendLine("CREATE FUNCTION `${name}_nextval`() RETURNS BIGINT")
+        sb.appendLine("DETERMINISTIC")
+        sb.appendLine("MODIFIES SQL DATA")
+        sb.appendLine("BEGIN")
+        sb.appendLine("    DECLARE new_val BIGINT;")
+        sb.appendLine("    UPDATE `seq_$name` SET `current_value` = `current_value` + `increment_by`;")
+        sb.appendLine("    SELECT `current_value` INTO new_val FROM `seq_$name`;")
+        sb.appendLine("    RETURN new_val;")
+        sb.appendLine("END //")
+        sb.appendLine("DELIMITER ;")
+        sb.appendLine()
+        sb.appendLine("-- 3. CURRVAL 함수")
+        sb.appendLine("DELIMITER //")
+        sb.appendLine("CREATE FUNCTION `${name}_currval`() RETURNS BIGINT")
+        sb.appendLine("DETERMINISTIC")
+        sb.appendLine("READS SQL DATA")
+        sb.appendLine("BEGIN")
+        sb.appendLine("    DECLARE curr_val BIGINT;")
+        sb.appendLine("    SELECT `current_value` INTO curr_val FROM `seq_$name`;")
+        sb.appendLine("    RETURN curr_val;")
+        sb.appendLine("END //")
+        sb.append("DELIMITER ;")
+
+        return sb.toString()
+    }
+
+    /**
+     * Tibero 시퀀스 생성 (Oracle 호환)
+     */
+    fun toTibero(schemaOwner: String): String {
+        // Tibero는 Oracle과 동일한 구문 사용
+        return toOracle(schemaOwner)
+    }
+
+    companion object {
+        /**
+         * Oracle 시퀀스 SQL에서 SequenceInfo 추출
+         */
+        fun parseFromOracle(sql: String): SequenceInfo {
+            val upperSql = sql.uppercase()
+
+            // 시퀀스명 추출
+            val nameRegex = """CREATE\s+SEQUENCE\s+"?(\w+)"?\."?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+            val nameMatch = nameRegex.find(sql)
+            val name = nameMatch?.groupValues?.get(2)
+                ?: Regex("""CREATE\s+SEQUENCE\s+"?(\w+)"?""", RegexOption.IGNORE_CASE)
+                    .find(sql)?.groupValues?.get(1) ?: "UNKNOWN_SEQ"
+
+            // START WITH
+            val startWithRegex = """START\s+WITH\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val startWith = startWithRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+
+            // INCREMENT BY
+            val incrementByRegex = """INCREMENT\s+BY\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val incrementBy = incrementByRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+
+            // MINVALUE
+            val minValue = if (upperSql.contains("NOMINVALUE")) {
+                null
+            } else {
+                val minRegex = """MINVALUE\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+                minRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+            }
+
+            // MAXVALUE
+            val maxValue = if (upperSql.contains("NOMAXVALUE")) {
+                null
+            } else {
+                val maxRegex = """MAXVALUE\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+                maxRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+            }
+
+            // CACHE
+            val cache = if (upperSql.contains("NOCACHE")) {
+                null
+            } else {
+                val cacheRegex = """CACHE\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE)
+                cacheRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+            }
+
+            // CYCLE
+            val cycle = upperSql.contains("CYCLE") && !upperSql.contains("NOCYCLE")
+
+            // ORDER
+            val order = upperSql.contains("ORDER") && !upperSql.contains("NOORDER")
+
+            return SequenceInfo(
+                name = name,
+                startWith = startWith,
+                incrementBy = incrementBy,
+                minValue = minValue,
+                maxValue = maxValue,
+                cache = cache,
+                cycle = cycle,
+                order = order
+            )
+        }
+
+        /**
+         * PostgreSQL 시퀀스 SQL에서 SequenceInfo 추출
+         */
+        fun parseFromPostgreSql(sql: String): SequenceInfo {
+            val upperSql = sql.uppercase()
+
+            // 시퀀스명 추출
+            val nameRegex = """CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+            val name = nameRegex.find(sql)?.groupValues?.get(1) ?: "UNKNOWN_SEQ"
+
+            // START WITH
+            val startWithRegex = """START\s+(?:WITH\s+)?(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val startWith = startWithRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+
+            // INCREMENT BY
+            val incrementByRegex = """INCREMENT\s+(?:BY\s+)?(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val incrementBy = incrementByRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull() ?: 1L
+
+            // MINVALUE
+            val minValue = if (upperSql.contains("NO MINVALUE")) {
+                null
+            } else {
+                val minRegex = """MINVALUE\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+                minRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+            }
+
+            // MAXVALUE
+            val maxValue = if (upperSql.contains("NO MAXVALUE")) {
+                null
+            } else {
+                val maxRegex = """MAXVALUE\s+(-?\d+)""".toRegex(RegexOption.IGNORE_CASE)
+                maxRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+            }
+
+            // CACHE
+            val cacheRegex = """CACHE\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val cache = cacheRegex.find(sql)?.groupValues?.get(1)?.toLongOrNull()
+
+            // CYCLE
+            val cycle = upperSql.contains("CYCLE") && !upperSql.contains("NO CYCLE")
+
+            return SequenceInfo(
+                name = name,
+                startWith = startWith,
+                incrementBy = incrementBy,
+                minValue = minValue,
+                maxValue = maxValue,
+                cache = cache,
+                cycle = cycle,
+                order = false  // PostgreSQL은 ORDER 옵션 없음
+            )
+        }
     }
 }

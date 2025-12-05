@@ -1731,4 +1731,512 @@ class TiberoDialect : AbstractDatabaseDialect() {
 
         return result
     }
+
+    // ==================== 시퀀스(Sequence) 변환 ====================
+
+    /**
+     * Tibero CREATE SEQUENCE 문을 다른 방언으로 변환
+     * Tibero 시퀀스 구문은 Oracle과 거의 동일
+     */
+    fun convertSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        schemaOwner: String = "SCHEMA"
+    ): String {
+        if (targetDialect == DialectType.TIBERO) {
+            return sql // 동일 방언
+        }
+
+        val createSeqPattern = Regex(
+            """CREATE\s+SEQUENCE\s+(?:(\w+)\.)?(\w+)(?:\s+(.+?))?(?:;|$)""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        val match = createSeqPattern.find(sql) ?: return sql
+
+        val schema = match.groupValues[1].takeIf { it.isNotEmpty() }
+        val seqName = match.groupValues[2]
+        val options = match.groupValues[3].takeIf { it.isNotEmpty() } ?: ""
+
+        // 옵션 파싱
+        var startWith: Long = 1
+        var incrementBy: Long = 1
+        var minValue: Long? = null
+        var maxValue: Long? = null
+        var cache: Int = 20
+        var cycle = false
+        var noOrder = true
+
+        Regex("""START\s+WITH\s+(\d+)""", RegexOption.IGNORE_CASE).find(options)?.let {
+            startWith = it.groupValues[1].toLongOrNull() ?: 1
+        }
+        Regex("""INCREMENT\s+BY\s+(-?\d+)""", RegexOption.IGNORE_CASE).find(options)?.let {
+            incrementBy = it.groupValues[1].toLongOrNull() ?: 1
+        }
+        Regex("""MINVALUE\s+(-?\d+)""", RegexOption.IGNORE_CASE).find(options)?.let {
+            minValue = it.groupValues[1].toLongOrNull()
+        }
+        Regex("""MAXVALUE\s+(\d+)""", RegexOption.IGNORE_CASE).find(options)?.let {
+            maxValue = it.groupValues[1].toLongOrNull()
+        }
+        Regex("""CACHE\s+(\d+)""", RegexOption.IGNORE_CASE).find(options)?.let {
+            cache = it.groupValues[1].toIntOrNull() ?: 20
+        }
+        if (options.contains(Regex("""NOCACHE""", RegexOption.IGNORE_CASE))) {
+            cache = 0
+        }
+        cycle = options.contains(Regex("""\bCYCLE\b""", RegexOption.IGNORE_CASE)) &&
+                !options.contains(Regex("""NOCYCLE""", RegexOption.IGNORE_CASE))
+        noOrder = options.contains(Regex("""NOORDER""", RegexOption.IGNORE_CASE)) ||
+                !options.contains(Regex("""\bORDER\b""", RegexOption.IGNORE_CASE))
+
+        return when (targetDialect) {
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Tibero CREATE SEQUENCE → PostgreSQL CREATE SEQUENCE 변환")
+
+                val sb = StringBuilder("CREATE SEQUENCE ")
+                if (schema != null) sb.append("${schema.lowercase()}.")
+                sb.append(seqName.lowercase())
+
+                if (incrementBy != 1L) sb.append(" INCREMENT BY $incrementBy")
+                if (minValue != null) sb.append(" MINVALUE $minValue")
+                else if (incrementBy > 0) sb.append(" NO MINVALUE")
+                if (maxValue != null) sb.append(" MAXVALUE $maxValue")
+                else sb.append(" NO MAXVALUE")
+                sb.append(" START WITH $startWith")
+                if (cache > 0) sb.append(" CACHE $cache")
+                if (cycle) sb.append(" CYCLE")
+                else sb.append(" NO CYCLE")
+
+                sb.toString()
+            }
+
+            DialectType.MYSQL -> {
+                appliedRules.add("Tibero CREATE SEQUENCE → MySQL 시퀀스 시뮬레이션 테이블 변환")
+                warnings.add(createWarning(
+                    type = WarningType.UNSUPPORTED_FUNCTION,
+                    message = "MySQL은 네이티브 시퀀스를 지원하지 않습니다. 테이블 기반 시뮬레이션으로 변환됩니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "시퀀스 테이블과 함수를 사용하여 시뮬레이션합니다."
+                ))
+
+                """
+                |-- Tibero 시퀀스를 MySQL 시뮬레이션으로 변환
+                |CREATE TABLE ${seqName.lowercase()}_seq (
+                |    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                |    stub CHAR(1) NOT NULL DEFAULT 'a',
+                |    UNIQUE KEY stub (stub)
+                |) ENGINE=InnoDB;
+                |
+                |-- 시작 값 설정
+                |ALTER TABLE ${seqName.lowercase()}_seq AUTO_INCREMENT = $startWith;
+                |
+                |-- NEXTVAL 함수
+                |DELIMITER //
+                |CREATE FUNCTION ${seqName.lowercase()}_nextval() RETURNS BIGINT
+                |DETERMINISTIC
+                |BEGIN
+                |    DECLARE new_val BIGINT;
+                |    INSERT INTO ${seqName.lowercase()}_seq (stub) VALUES ('a')
+                |        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id + $incrementBy);
+                |    SET new_val = LAST_INSERT_ID();
+                |    RETURN new_val;
+                |END //
+                |DELIMITER ;
+                |
+                |-- CURRVAL 함수
+                |DELIMITER //
+                |CREATE FUNCTION ${seqName.lowercase()}_currval() RETURNS BIGINT
+                |DETERMINISTIC
+                |BEGIN
+                |    DECLARE curr_val BIGINT;
+                |    SELECT id INTO curr_val FROM ${seqName.lowercase()}_seq WHERE stub = 'a';
+                |    RETURN curr_val;
+                |END //
+                |DELIMITER ;
+                """.trimMargin()
+            }
+
+            DialectType.ORACLE -> {
+                appliedRules.add("Tibero CREATE SEQUENCE → Oracle CREATE SEQUENCE 변환")
+
+                val sb = StringBuilder("CREATE SEQUENCE ")
+                if (schema != null) sb.append("${schema.uppercase()}.")
+                sb.append(seqName.uppercase())
+
+                if (incrementBy != 1L) sb.append(" INCREMENT BY $incrementBy")
+                sb.append(" START WITH $startWith")
+                if (minValue != null) sb.append(" MINVALUE $minValue")
+                else sb.append(" NOMINVALUE")
+                if (maxValue != null) sb.append(" MAXVALUE $maxValue")
+                else sb.append(" NOMAXVALUE")
+                if (cache > 0) sb.append(" CACHE $cache")
+                else sb.append(" NOCACHE")
+                if (cycle) sb.append(" CYCLE")
+                else sb.append(" NOCYCLE")
+                if (noOrder) sb.append(" NOORDER")
+                else sb.append(" ORDER")
+
+                sb.toString()
+            }
+
+            else -> sql
+        }
+    }
+
+    /**
+     * Tibero 시퀀스 사용 구문(NEXTVAL, CURRVAL)을 다른 방언으로 변환
+     */
+    fun convertSequenceUsage(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (targetDialect == DialectType.TIBERO) {
+            return sql
+        }
+
+        var result = sql
+
+        when (targetDialect) {
+            DialectType.POSTGRESQL -> {
+                // seq_name.NEXTVAL → nextval('seq_name')
+                result = result.replace(
+                    Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                ) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    appliedRules.add("Tibero $seqName.NEXTVAL → PostgreSQL nextval('$seqName')")
+                    "nextval('$seqName')"
+                }
+
+                // seq_name.CURRVAL → currval('seq_name')
+                result = result.replace(
+                    Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                ) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    appliedRules.add("Tibero $seqName.CURRVAL → PostgreSQL currval('$seqName')")
+                    "currval('$seqName')"
+                }
+            }
+
+            DialectType.MYSQL -> {
+                // seq_name.NEXTVAL → seq_name_nextval()
+                result = result.replace(
+                    Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                ) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    appliedRules.add("Tibero $seqName.NEXTVAL → MySQL ${seqName}_nextval()")
+                    "${seqName}_nextval()"
+                }
+
+                // seq_name.CURRVAL → seq_name_currval()
+                result = result.replace(
+                    Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                ) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    appliedRules.add("Tibero $seqName.CURRVAL → MySQL ${seqName}_currval()")
+                    "${seqName}_currval()"
+                }
+            }
+
+            DialectType.ORACLE -> {
+                // Tibero와 Oracle은 동일한 구문 사용, 대문자로 정규화만 수행
+                result = result.replace(
+                    Regex("""(\w+)\.(NEXTVAL|CURRVAL)""", RegexOption.IGNORE_CASE)
+                ) { match ->
+                    val seqName = match.groupValues[1].uppercase()
+                    val func = match.groupValues[2].uppercase()
+                    appliedRules.add("Tibero 시퀀스 참조 → Oracle $seqName.$func")
+                    "$seqName.$func"
+                }
+            }
+
+            else -> {}
+        }
+
+        return result
+    }
+
+    /**
+     * Tibero ALTER SEQUENCE 문을 다른 방언으로 변환
+     */
+    fun convertAlterSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        schemaOwner: String = "SCHEMA"
+    ): String {
+        if (targetDialect == DialectType.TIBERO) {
+            return sql
+        }
+
+        val alterSeqPattern = Regex(
+            """ALTER\s+SEQUENCE\s+(?:(\w+)\.)?(\w+)\s+(.+?)(?:;|$)""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        val match = alterSeqPattern.find(sql) ?: return sql
+
+        val schema = match.groupValues[1].takeIf { it.isNotEmpty() }
+        val seqName = match.groupValues[2]
+        val options = match.groupValues[3]
+
+        return when (targetDialect) {
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Tibero ALTER SEQUENCE → PostgreSQL ALTER SEQUENCE 변환")
+
+                var pgOptions = options
+                    .replace(Regex("""NOCACHE""", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("""NOCYCLE""", RegexOption.IGNORE_CASE), "NO CYCLE")
+                    .replace(Regex("""NOMINVALUE""", RegexOption.IGNORE_CASE), "NO MINVALUE")
+                    .replace(Regex("""NOMAXVALUE""", RegexOption.IGNORE_CASE), "NO MAXVALUE")
+                    .replace(Regex("""NOORDER""", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("""\bORDER\b""", RegexOption.IGNORE_CASE), "")
+                    .trim()
+
+                val qualifiedName = if (schema != null) "${schema.lowercase()}.${seqName.lowercase()}"
+                else seqName.lowercase()
+
+                "ALTER SEQUENCE $qualifiedName $pgOptions".trim()
+            }
+
+            DialectType.MYSQL -> {
+                appliedRules.add("Tibero ALTER SEQUENCE → MySQL 시뮬레이션 변환")
+                warnings.add(createWarning(
+                    type = WarningType.UNSUPPORTED_FUNCTION,
+                    message = "MySQL은 ALTER SEQUENCE를 지원하지 않습니다.",
+                    severity = WarningSeverity.ERROR,
+                    suggestion = "시퀀스 시뮬레이션 테이블의 AUTO_INCREMENT 값을 직접 수정하세요."
+                ))
+
+                // INCREMENT BY 값 추출 시도
+                val incrementMatch = Regex("""INCREMENT\s+BY\s+(-?\d+)""", RegexOption.IGNORE_CASE).find(options)
+                val restartMatch = Regex("""RESTART\s+(?:WITH\s+)?(\d+)""", RegexOption.IGNORE_CASE).find(options)
+
+                val sb = StringBuilder("-- MySQL 시퀀스 시뮬레이션 수정\n")
+                if (restartMatch != null) {
+                    val restartVal = restartMatch.groupValues[1]
+                    sb.append("ALTER TABLE ${seqName.lowercase()}_seq AUTO_INCREMENT = $restartVal;")
+                }
+                if (incrementMatch != null) {
+                    sb.append("\n-- INCREMENT BY 변경은 함수 재생성이 필요합니다")
+                }
+
+                sb.toString()
+            }
+
+            DialectType.ORACLE -> {
+                appliedRules.add("Tibero ALTER SEQUENCE → Oracle ALTER SEQUENCE 변환")
+
+                val qualifiedName = if (schema != null) "${schema.uppercase()}.${seqName.uppercase()}"
+                else seqName.uppercase()
+
+                "ALTER SEQUENCE $qualifiedName ${options.uppercase()}"
+            }
+
+            else -> sql
+        }
+    }
+
+    /**
+     * Tibero DROP SEQUENCE 문을 다른 방언으로 변환
+     */
+    fun convertDropSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (targetDialect == DialectType.TIBERO) {
+            return sql
+        }
+
+        val dropSeqPattern = Regex(
+            """DROP\s+SEQUENCE\s+(?:IF\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)(?:\s+CASCADE)?(?:;|$)""",
+            RegexOption.IGNORE_CASE
+        )
+
+        val match = dropSeqPattern.find(sql) ?: return sql
+
+        val schema = match.groupValues[1].takeIf { it.isNotEmpty() }
+        val seqName = match.groupValues[2]
+        val hasCascade = sql.contains(Regex("""CASCADE""", RegexOption.IGNORE_CASE))
+        val hasIfExists = sql.contains(Regex("""IF\s+EXISTS""", RegexOption.IGNORE_CASE))
+
+        return when (targetDialect) {
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Tibero DROP SEQUENCE → PostgreSQL DROP SEQUENCE 변환")
+
+                val qualifiedName = if (schema != null) "${schema.lowercase()}.${seqName.lowercase()}"
+                else seqName.lowercase()
+
+                val sb = StringBuilder("DROP SEQUENCE ")
+                if (hasIfExists) sb.append("IF EXISTS ")
+                sb.append(qualifiedName)
+                if (hasCascade) sb.append(" CASCADE")
+
+                sb.toString()
+            }
+
+            DialectType.MYSQL -> {
+                appliedRules.add("Tibero DROP SEQUENCE → MySQL 시뮬레이션 테이블 삭제")
+                warnings.add(createWarning(
+                    type = WarningType.UNSUPPORTED_FUNCTION,
+                    message = "MySQL 시퀀스 시뮬레이션 삭제: 테이블과 함수를 모두 삭제해야 합니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "시퀀스 테이블과 관련 함수를 함께 삭제합니다."
+                ))
+
+                """
+                |-- Tibero DROP SEQUENCE를 MySQL 시뮬레이션 삭제로 변환
+                |DROP FUNCTION IF EXISTS ${seqName.lowercase()}_nextval;
+                |DROP FUNCTION IF EXISTS ${seqName.lowercase()}_currval;
+                |DROP TABLE IF EXISTS ${seqName.lowercase()}_seq;
+                """.trimMargin()
+            }
+
+            DialectType.ORACLE -> {
+                appliedRules.add("Tibero DROP SEQUENCE → Oracle DROP SEQUENCE 변환")
+
+                val qualifiedName = if (schema != null) "${schema.uppercase()}.${seqName.uppercase()}"
+                else seqName.uppercase()
+
+                // Oracle은 IF EXISTS를 지원하지 않음
+                if (hasIfExists) {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "Oracle은 DROP SEQUENCE에서 IF EXISTS를 지원하지 않습니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "예외 처리 블록을 사용하거나 시퀀스 존재 여부를 먼저 확인하세요."
+                    ))
+                }
+
+                "DROP SEQUENCE $qualifiedName"
+            }
+
+            else -> sql
+        }
+    }
+
+    /**
+     * 시퀀스 다음 값 조회 SELECT 문 생성
+     */
+    fun generateSequenceNextValueSelect(
+        seqName: String,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.TIBERO -> {
+                appliedRules.add("Tibero 시퀀스 NEXTVAL SELECT 생성")
+                "SELECT ${seqName.uppercase()}.NEXTVAL FROM DUAL"
+            }
+
+            DialectType.ORACLE -> {
+                appliedRules.add("Oracle 시퀀스 NEXTVAL SELECT 생성")
+                "SELECT ${seqName.uppercase()}.NEXTVAL FROM DUAL"
+            }
+
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("PostgreSQL nextval() SELECT 생성")
+                "SELECT nextval('${seqName.lowercase()}')"
+            }
+
+            DialectType.MYSQL -> {
+                appliedRules.add("MySQL 시퀀스 시뮬레이션 함수 호출 생성")
+                "SELECT ${seqName.lowercase()}_nextval()"
+            }
+
+            else -> "SELECT ${seqName}.NEXTVAL FROM DUAL"
+        }
+    }
+
+    /**
+     * 시퀀스를 사용하는 INSERT 문 변환
+     */
+    fun convertInsertWithSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (targetDialect == DialectType.TIBERO) {
+            return sql
+        }
+
+        var result = sql
+
+        // INSERT 문에서 시퀀스 사용 패턴 찾기
+        val seqUsagePattern = Regex("""(\w+)\.(NEXTVAL|CURRVAL)""", RegexOption.IGNORE_CASE)
+
+        when (targetDialect) {
+            DialectType.POSTGRESQL -> {
+                result = seqUsagePattern.replace(result) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    val func = match.groupValues[2].lowercase()
+                    appliedRules.add("INSERT 문 내 Tibero 시퀀스 → PostgreSQL 변환")
+                    "${func}('$seqName')"
+                }
+            }
+
+            DialectType.MYSQL -> {
+                result = seqUsagePattern.replace(result) { match ->
+                    val seqName = match.groupValues[1].lowercase()
+                    val func = match.groupValues[2].lowercase()
+                    appliedRules.add("INSERT 문 내 Tibero 시퀀스 → MySQL 함수 변환")
+                    "${seqName}_${func}()"
+                }
+            }
+
+            DialectType.ORACLE -> {
+                result = seqUsagePattern.replace(result) { match ->
+                    val seqName = match.groupValues[1].uppercase()
+                    val func = match.groupValues[2].uppercase()
+                    appliedRules.add("INSERT 문 내 Tibero 시퀀스 → Oracle 변환")
+                    "$seqName.$func"
+                }
+            }
+
+            else -> {}
+        }
+
+        return result
+    }
+
+    /**
+     * 시퀀스 현재 값 조회 SELECT 문 생성
+     */
+    fun generateSequenceCurrentValueSelect(
+        seqName: String,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.TIBERO -> {
+                appliedRules.add("Tibero 시퀀스 CURRVAL SELECT 생성")
+                "SELECT ${seqName.uppercase()}.CURRVAL FROM DUAL"
+            }
+
+            DialectType.ORACLE -> {
+                appliedRules.add("Oracle 시퀀스 CURRVAL SELECT 생성")
+                "SELECT ${seqName.uppercase()}.CURRVAL FROM DUAL"
+            }
+
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("PostgreSQL currval() SELECT 생성")
+                "SELECT currval('${seqName.lowercase()}')"
+            }
+
+            DialectType.MYSQL -> {
+                appliedRules.add("MySQL 시퀀스 시뮬레이션 CURRVAL 함수 호출 생성")
+                "SELECT ${seqName.lowercase()}_currval()"
+            }
+
+            else -> "SELECT ${seqName}.CURRVAL FROM DUAL"
+        }
+    }
 }

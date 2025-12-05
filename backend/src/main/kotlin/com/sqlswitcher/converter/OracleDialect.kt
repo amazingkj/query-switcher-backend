@@ -2393,4 +2393,294 @@ $sql
 
         return result.trim()
     }
+
+    // ==================== 시퀀스 변환 ====================
+
+    /**
+     * Oracle 시퀀스 생성문을 다른 방언으로 변환
+     */
+    fun convertSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        schemaOwner: String = "SCHEMA"
+    ): String {
+        val upperSql = sql.trim().uppercase()
+
+        if (!upperSql.startsWith("CREATE SEQUENCE")) {
+            return sql
+        }
+
+        val seqInfo = SequenceInfo.parseFromOracle(sql)
+
+        return when (targetDialect) {
+            DialectType.ORACLE -> seqInfo.toOracle(schemaOwner)
+            DialectType.TIBERO -> seqInfo.toTibero(schemaOwner)
+            DialectType.MYSQL -> {
+                appliedRules.add("Oracle 시퀀스를 MySQL 시뮬레이션으로 변환")
+                seqInfo.toMySql(warnings)
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("Oracle 시퀀스를 PostgreSQL 형식으로 변환")
+                seqInfo.toPostgreSql()
+            }
+        }
+    }
+
+    /**
+     * 시퀀스 사용 구문 변환 (NEXTVAL, CURRVAL)
+     */
+    fun convertSequenceUsage(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                // PostgreSQL 형식: nextval('seq_name') -> seq_name.NEXTVAL
+                result = Regex("""nextval\s*\(\s*'(\w+)'\s*\)""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("PostgreSQL nextval을 Oracle 형식으로 변환")
+                        "${match.groupValues[1]}.NEXTVAL"
+                    }
+                result = Regex("""currval\s*\(\s*'(\w+)'\s*\)""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("PostgreSQL currval을 Oracle 형식으로 변환")
+                        "${match.groupValues[1]}.CURRVAL"
+                    }
+
+                // MySQL 함수 형식: seq_name_nextval() -> seq_name.NEXTVAL
+                result = Regex("""(\w+)_nextval\s*\(\s*\)""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("MySQL 시퀀스 함수를 Oracle 형식으로 변환")
+                        "${match.groupValues[1]}.NEXTVAL"
+                    }
+                result = Regex("""(\w+)_currval\s*\(\s*\)""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("MySQL 시퀀스 함수를 Oracle 형식으로 변환")
+                        "${match.groupValues[1]}.CURRVAL"
+                    }
+            }
+
+            DialectType.MYSQL -> {
+                // Oracle 형식: seq_name.NEXTVAL -> seq_name_nextval()
+                result = Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("Oracle NEXTVAL을 MySQL 함수로 변환")
+                        "${match.groupValues[1]}_nextval()"
+                    }
+                result = Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("Oracle CURRVAL을 MySQL 함수로 변환")
+                        "${match.groupValues[1]}_currval()"
+                    }
+            }
+
+            DialectType.POSTGRESQL -> {
+                // Oracle 형식: seq_name.NEXTVAL -> nextval('seq_name')
+                result = Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("Oracle NEXTVAL을 PostgreSQL nextval로 변환")
+                        "nextval('${match.groupValues[1]}')"
+                    }
+                result = Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("Oracle CURRVAL을 PostgreSQL currval로 변환")
+                        "currval('${match.groupValues[1]}')"
+                    }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * ALTER SEQUENCE 변환
+     */
+    fun convertAlterSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>,
+        schemaOwner: String = "SCHEMA"
+    ): String {
+        val upperSql = sql.uppercase()
+
+        // 시퀀스명 추출
+        val seqNameMatch = Regex("""ALTER\s+SEQUENCE\s+"?(\w+)"?\."?(\w+)"?""", RegexOption.IGNORE_CASE).find(sql)
+            ?: Regex("""ALTER\s+SEQUENCE\s+"?(\w+)"?""", RegexOption.IGNORE_CASE).find(sql)
+        val seqName = if (seqNameMatch?.groupValues?.size ?: 0 > 2 && seqNameMatch?.groupValues?.get(2)?.isNotBlank() == true) {
+            seqNameMatch?.groupValues?.get(2)
+        } else {
+            seqNameMatch?.groupValues?.get(1)
+        } ?: return sql
+
+        // INCREMENT BY 추출
+        val incrementMatch = Regex("""INCREMENT\s+BY\s+(-?\d+)""", RegexOption.IGNORE_CASE).find(sql)
+        val incrementValue = incrementMatch?.groupValues?.get(1)?.toLongOrNull()
+
+        // MINVALUE/MAXVALUE/CACHE/CYCLE 추출
+        val hasNoMinValue = upperSql.contains("NOMINVALUE")
+        val hasNoMaxValue = upperSql.contains("NOMAXVALUE")
+        val hasNoCache = upperSql.contains("NOCACHE")
+        val cacheMatch = Regex("""CACHE\s+(\d+)""", RegexOption.IGNORE_CASE).find(sql)
+        val cacheValue = cacheMatch?.groupValues?.get(1)?.toLongOrNull()
+        val hasCycle = upperSql.contains("CYCLE") && !upperSql.contains("NOCYCLE")
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> sql // 그대로 유지
+            DialectType.MYSQL -> {
+                warnings.add(ConversionWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "MySQL은 ALTER SEQUENCE를 지원하지 않습니다.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "시퀀스 시뮬레이션 테이블을 직접 UPDATE하세요."
+                ))
+                val result = StringBuilder("-- MySQL 시퀀스 시뮬레이션 수정\n")
+                if (incrementValue != null) {
+                    result.appendLine("UPDATE `seq_$seqName` SET `increment_by` = $incrementValue;")
+                }
+                appliedRules.add("ALTER SEQUENCE를 MySQL UPDATE로 변환")
+                result.toString().trim()
+            }
+            DialectType.POSTGRESQL -> {
+                val result = StringBuilder("ALTER SEQUENCE \"$seqName\"")
+                if (incrementValue != null) {
+                    result.append("\n    INCREMENT BY $incrementValue")
+                }
+                if (hasNoMinValue) {
+                    result.append("\n    NO MINVALUE")
+                }
+                if (hasNoMaxValue) {
+                    result.append("\n    NO MAXVALUE")
+                }
+                if (cacheValue != null && cacheValue > 1) {
+                    result.append("\n    CACHE $cacheValue")
+                }
+                if (hasCycle) {
+                    result.append("\n    CYCLE")
+                } else {
+                    result.append("\n    NO CYCLE")
+                }
+                appliedRules.add("ALTER SEQUENCE를 PostgreSQL 형식으로 변환")
+                result.toString()
+            }
+        }
+    }
+
+    /**
+     * DROP SEQUENCE 변환
+     */
+    fun convertDropSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        // 시퀀스명 추출
+        val seqNameMatch = Regex("""DROP\s+SEQUENCE\s+"?(\w+)"?\."?(\w+)"?""", RegexOption.IGNORE_CASE).find(sql)
+            ?: Regex("""DROP\s+SEQUENCE\s+"?(\w+)"?""", RegexOption.IGNORE_CASE).find(sql)
+        val seqName = if (seqNameMatch?.groupValues?.size ?: 0 > 2 && seqNameMatch?.groupValues?.get(2)?.isNotBlank() == true) {
+            seqNameMatch?.groupValues?.get(2)
+        } else {
+            seqNameMatch?.groupValues?.get(1)
+        } ?: return sql
+
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> sql // 그대로 유지
+            DialectType.MYSQL -> {
+                appliedRules.add("DROP SEQUENCE를 MySQL 시뮬레이션 삭제로 변환")
+                """-- MySQL 시퀀스 시뮬레이션 삭제
+DROP TABLE IF EXISTS `seq_$seqName`;
+DROP FUNCTION IF EXISTS `${seqName}_nextval`;
+DROP FUNCTION IF EXISTS `${seqName}_currval`;"""
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("DROP SEQUENCE를 PostgreSQL 형식으로 변환")
+                "DROP SEQUENCE IF EXISTS \"$seqName\""
+            }
+        }
+    }
+
+    /**
+     * 시퀀스에서 다음 값 가져오기 - 다른 방언용 SELECT 문 생성
+     */
+    fun generateSequenceNextValueSelect(
+        seqName: String,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        return when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                appliedRules.add("Oracle 시퀀스 NEXTVAL SELECT 생성")
+                "SELECT $seqName.NEXTVAL FROM DUAL"
+            }
+            DialectType.POSTGRESQL -> {
+                appliedRules.add("PostgreSQL nextval SELECT 생성")
+                "SELECT nextval('$seqName')"
+            }
+            DialectType.MYSQL -> {
+                appliedRules.add("MySQL 시퀀스 함수 호출 생성")
+                "SELECT ${seqName}_nextval()"
+            }
+        }
+    }
+
+    /**
+     * INSERT 문에서 시퀀스 사용을 다른 방언으로 변환
+     * 예: INSERT INTO t VALUES (seq.NEXTVAL, ...) -> INSERT INTO t VALUES (nextval('seq'), ...)
+     */
+    fun convertInsertWithSequence(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        when (targetDialect) {
+            DialectType.ORACLE, DialectType.TIBERO -> {
+                // 이미 Oracle 형식이면 유지
+            }
+            DialectType.POSTGRESQL -> {
+                // seq.NEXTVAL -> nextval('seq')
+                result = Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("INSERT 문의 Oracle NEXTVAL을 PostgreSQL nextval로 변환")
+                        "nextval('${match.groupValues[1]}')"
+                    }
+                result = Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("INSERT 문의 Oracle CURRVAL을 PostgreSQL currval로 변환")
+                        "currval('${match.groupValues[1]}')"
+                    }
+            }
+            DialectType.MYSQL -> {
+                // seq.NEXTVAL -> seq_nextval()
+                result = Regex("""(\w+)\.NEXTVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("INSERT 문의 Oracle NEXTVAL을 MySQL 함수로 변환")
+                        "${match.groupValues[1]}_nextval()"
+                    }
+                result = Regex("""(\w+)\.CURRVAL""", RegexOption.IGNORE_CASE)
+                    .replace(result) { match ->
+                        appliedRules.add("INSERT 문의 Oracle CURRVAL을 MySQL 함수로 변환")
+                        "${match.groupValues[1]}_currval()"
+                    }
+
+                warnings.add(ConversionWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "MySQL 시퀀스 시뮬레이션 함수가 미리 생성되어 있어야 합니다.",
+                    severity = WarningSeverity.INFO,
+                    suggestion = "시퀀스 생성문을 먼저 변환하여 함수를 생성하세요."
+                ))
+            }
+        }
+
+        return result
+    }
 }

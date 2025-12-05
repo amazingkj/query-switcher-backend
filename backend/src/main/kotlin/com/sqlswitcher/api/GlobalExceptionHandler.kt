@@ -9,6 +9,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.context.request.WebRequest
+import org.springframework.web.servlet.resource.NoResourceFoundException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -69,6 +70,23 @@ class GlobalExceptionHandler {
         )
         
         return ResponseEntity.badRequest().body(errorResponse)
+    }
+
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun handleNoResourceFoundException(
+        ex: NoResourceFoundException,
+        request: WebRequest
+    ): ResponseEntity<ErrorResponse> {
+        // 404는 일반적인 상황이므로 DEBUG 레벨로 로깅
+        logger.debug("Resource not found: ${ex.resourcePath}")
+
+        val errorResponse = ErrorResponse(
+            errorCode = "NOT_FOUND",
+            message = "Resource not found: ${ex.resourcePath}",
+            timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        )
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse)
     }
 
     @ExceptionHandler(Exception::class)
