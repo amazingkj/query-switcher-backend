@@ -1,5 +1,14 @@
 import axios, {type AxiosInstance, type AxiosResponse } from 'axios';
-import type {ConversionRequest, ConversionResponse, ErrorResponse} from '../types';
+import type {
+  ConversionRequest,
+  ConversionResponse,
+  ErrorResponse,
+  ValidationRequest,
+  ValidationResponse,
+  TestRequest,
+  TestResponse,
+  ContainerStatusResponse
+} from '../types';
 
 // API 클라이언트 설정
 const apiClient: AxiosInstance = axios.create({
@@ -52,6 +61,30 @@ export const sqlConverterApi = {
   // 헬스 체크
   healthCheck: async (): Promise<{ status: string; service: string }> => {
     const response = await apiClient.get('/health');
+    return response.data;
+  }
+};
+
+// SQL 검증 API
+export const sqlValidationApi = {
+  // SQL 문법 검증 (빠름)
+  validateSyntax: async (request: ValidationRequest): Promise<ValidationResponse> => {
+    const response = await apiClient.post<ValidationResponse>('/validate/syntax', request);
+    return response.data;
+  },
+
+  // SQL 실제 테스트 (Testcontainers)
+  testSql: async (request: TestRequest): Promise<TestResponse> => {
+    // 테스트는 시간이 걸릴 수 있으므로 타임아웃 증가
+    const response = await apiClient.post<TestResponse>('/validate/test', request, {
+      timeout: 120000 // 2분
+    });
+    return response.data;
+  },
+
+  // 컨테이너 상태 확인
+  getContainerStatus: async (): Promise<ContainerStatusResponse> => {
+    const response = await apiClient.get<ContainerStatusResponse>('/validate/containers/status');
     return response.data;
   }
 };

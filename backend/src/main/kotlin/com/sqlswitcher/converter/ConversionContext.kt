@@ -451,7 +451,9 @@ data class PartitionInfo(
 data class PartitionDefinition(
     val name: String,
     val values: String,          // LESS THAN 값 또는 LIST 값
-    val tablespace: String? = null
+    val tablespace: String? = null,
+    val subpartitions: List<SubpartitionDefinition> = emptyList(),  // 서브파티션 정의
+    val subpartitionCount: Int? = null  // SUBPARTITIONS n 지정 시
 ) {
     fun toOracleDefinition(isLast: Boolean): String {
         val sb = StringBuilder("    PARTITION \"$name\" VALUES ")
@@ -460,18 +462,28 @@ data class PartitionDefinition(
         if (values.uppercase().contains("MAXVALUE")) {
             sb.append("LESS THAN (MAXVALUE)")
         } else if (values.uppercase().startsWith("LESS THAN")) {
-            // LESS THAN (값) 형식
             val valueMatch = Regex("LESS\\s+THAN\\s*\\(([^)]+)\\)", RegexOption.IGNORE_CASE).find(values)
             val actualValue = valueMatch?.groupValues?.get(1) ?: values
             sb.append("LESS THAN ($actualValue)")
         } else if (values.uppercase().startsWith("IN")) {
-            // IN (값들) 형식 (LIST 파티션)
             sb.append(values)
         } else {
             sb.append("LESS THAN ($values)")
         }
 
         tablespace?.let { sb.append(" TABLESPACE \"$it\"") }
+
+        // 서브파티션 추가
+        if (subpartitions.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("    (")
+            sb.append(subpartitions.joinToString(",\n") { it.toOracleDefinition() })
+            sb.appendLine()
+            sb.append("    )")
+        } else if (subpartitionCount != null && subpartitionCount > 0) {
+            sb.append(" SUBPARTITIONS $subpartitionCount")
+        }
+
         return sb.toString()
     }
 
@@ -488,6 +500,18 @@ data class PartitionDefinition(
             sb.append("LESS THAN ($values)")
         }
 
+        // MySQL 서브파티션 (HASH/KEY만 지원)
+        if (subpartitions.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("    (")
+            sb.append(subpartitions.joinToString(",\n") { it.toMySqlDefinition() })
+            sb.appendLine()
+            sb.append("    )")
+        } else if (subpartitionCount != null && subpartitionCount > 0) {
+            sb.append(" SUBPARTITIONS $subpartitionCount")
+        }
+
+        // MySQL은 TABLESPACE 미지원 (파티션 레벨)
         return sb.toString()
     }
 
@@ -512,6 +536,9 @@ data class PartitionDefinition(
             else -> { }
         }
 
+        // PostgreSQL은 파티션 테이블에 TABLESPACE 지정 가능
+        tablespace?.let { sb.append(" TABLESPACE \"$it\"") }
+
         return sb.toString()
     }
 }
@@ -522,8 +549,23 @@ data class PartitionDefinition(
 data class SubpartitionDefinition(
     val name: String,
     val partitionName: String,
-    val values: String? = null
-)
+    val values: String? = null,
+    val tablespace: String? = null
+) {
+    fun toOracleDefinition(): String {
+        val sb = StringBuilder("        SUBPARTITION \"$name\"")
+        values?.let { sb.append(" VALUES ($it)") }
+        tablespace?.let { sb.append(" TABLESPACE \"$it\"") }
+        return sb.toString()
+    }
+
+    fun toMySqlDefinition(): String {
+        val sb = StringBuilder("        SUBPARTITION `$name`")
+        values?.let { sb.append(" VALUES ($it)") }
+        // MySQL은 서브파티션에 TABLESPACE 미지원
+        return sb.toString()
+    }
+}
 
 
 /**

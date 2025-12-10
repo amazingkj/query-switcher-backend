@@ -47,7 +47,14 @@ dependencies {
     // Database
     implementation("com.h2database:h2")
     implementation("org.postgresql:postgresql")
-    
+    implementation("com.mysql:mysql-connector-j:8.2.0")
+
+    // Testcontainers (for SQL validation)
+    implementation("org.testcontainers:testcontainers:1.19.3")
+    implementation("org.testcontainers:mysql:1.19.3")
+    implementation("org.testcontainers:postgresql:1.19.3")
+    implementation("org.testcontainers:oracle-xe:1.19.3")
+
     // JSON Processing
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     

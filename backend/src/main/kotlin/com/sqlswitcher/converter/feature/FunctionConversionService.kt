@@ -1,13 +1,12 @@
 package com.sqlswitcher.converter.feature
 
-import com.sqlswitcher.converter.core.*
-import com.sqlswitcher.converter.mapping.*
-import net.sf.jsqlparser.expression.Function as SqlFunction
-import net.sf.jsqlparser.expression.Expression
-import net.sf.jsqlparser.expression.CaseExpression
-import net.sf.jsqlparser.expression.WhenClause
-import net.sf.jsqlparser.expression.operators.relational.IsNullExpression
-import net.sf.jsqlparser.expression.operators.relational.ExpressionList
+import com.sqlswitcher.converter.DialectType
+import com.sqlswitcher.converter.ConversionWarning
+import com.sqlswitcher.converter.WarningType
+import com.sqlswitcher.converter.WarningSeverity
+import com.sqlswitcher.converter.mapping.FunctionMappingRegistry
+import com.sqlswitcher.converter.mapping.FunctionMappingRule
+import com.sqlswitcher.converter.mapping.ParameterTransform
 import org.springframework.stereotype.Service
 
 /**
@@ -17,253 +16,27 @@ import org.springframework.stereotype.Service
 class FunctionConversionService(
     private val mappingRegistry: FunctionMappingRegistry
 ) {
+    // 정규식 캐시 - 컴파일 비용 절감
+    private val patternCache = mutableMapOf<String, Regex>()
 
-    /**
-     * SQL 함수를 타겟 방언으로 변환
-     */
-    fun convertFunction(
-        function: SqlFunction,
-        sourceDialect: DialectType,
-        targetDialect: DialectType,
-        warnings: MutableList<ConversionWarning>,
-        appliedRules: MutableList<String>
-    ): Expression {
-        if (sourceDialect == targetDialect) {
-            return function
-        }
-
-        val functionName = function.name?.uppercase() ?: return function
-        val rule = mappingRegistry.getMapping(sourceDialect, targetDialect, functionName)
-
-        if (rule == null) {
-            // 매핑 규칙이 없으면 원본 반환
-            return function
-        }
-
-        // 경고 추가
-        if (rule.warningType != null && rule.warningMessage != null) {
-            warnings.add(ConversionWarning(
-                type = rule.warningType,
-                message = rule.warningMessage,
-                severity = WarningSeverity.WARNING,
-                suggestion = rule.suggestion
-            ))
-        }
-
-        // CASE WHEN 변환이 필요한 경우
-        if (rule.parameterTransform == ParameterTransform.TO_CASE_WHEN) {
-            return convertToCaseWhen(function, functionName, sourceDialect, targetDialect, appliedRules)
-        }
-
-        // 일반 함수 변환
-        val convertedFunction = function.clone() as SqlFunction
-        convertedFunction.name = rule.targetFunction
-
-        // 파라미터 변환
-        when (rule.parameterTransform) {
-            ParameterTransform.SWAP_FIRST_TWO -> swapFirstTwoParameters(convertedFunction)
-            ParameterTransform.DATE_FORMAT_CONVERT -> convertDateFormat(convertedFunction, sourceDialect, targetDialect)
-            else -> { /* 변환 없음 */ }
-        }
-
-        appliedRules.add("${rule.sourceFunction}() → ${rule.targetFunction}()")
-        return convertedFunction
-    }
-
-    /**
-     * DECODE, NVL2 등을 CASE WHEN으로 변환
-     */
-    private fun convertToCaseWhen(
-        function: SqlFunction,
-        functionName: String,
-        sourceDialect: DialectType,
-        targetDialect: DialectType,
-        appliedRules: MutableList<String>
-    ): Expression {
-        val params = function.parameters?.expressions ?: return function
-
-        return when (functionName) {
-            "DECODE" -> convertDecodeToCaseWhen(params, appliedRules)
-            "NVL2" -> convertNvl2ToCaseWhen(params, appliedRules)
-            "IF" -> convertIfToCaseWhen(params, appliedRules)
-            else -> function
+    private fun getPattern(functionName: String): Regex {
+        return patternCache.getOrPut(functionName) {
+            Regex("\\b${functionName}\\s*\\(", RegexOption.IGNORE_CASE)
         }
     }
 
-    /**
-     * DECODE(expr, search1, result1, search2, result2, ..., default) → CASE WHEN
-     */
-    private fun convertDecodeToCaseWhen(
-        params: List<Expression>,
-        appliedRules: MutableList<String>
-    ): CaseExpression {
-        if (params.isEmpty()) {
-            return CaseExpression()
-        }
-
-        val caseExpr = CaseExpression()
-        val switchExpr = params[0]
-        caseExpr.switchExpression = switchExpr
-
-        val whenClauses = mutableListOf<WhenClause>()
-        var i = 1
-        while (i + 1 < params.size) {
-            val whenClause = WhenClause()
-            whenClause.whenExpression = params[i]
-            whenClause.thenExpression = params[i + 1]
-            whenClauses.add(whenClause)
-            i += 2
-        }
-        caseExpr.whenClauses = whenClauses
-
-        // 홀수 개 파라미터면 마지막이 default
-        if (i < params.size) {
-            caseExpr.elseExpression = params[i]
-        }
-
-        appliedRules.add("DECODE() → CASE WHEN 변환")
-        return caseExpr
+    // 자주 사용되는 정규식 상수 (컴파일 1회)
+    companion object {
+        private val SYSDATE_PATTERN = Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE)
+        private val SYSTIMESTAMP_PATTERN = Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE)
+        private val NOW_PATTERN = Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE)
+        private val DECODE_PATTERN = Regex("""DECODE\s*\(\s*([^,]+)\s*,\s*(.+)\s*\)""", RegexOption.IGNORE_CASE)
+        private val NVL2_PATTERN = Regex("""NVL2\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)""", RegexOption.IGNORE_CASE)
+        private val IF_PATTERN = Regex("""IF\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)""", RegexOption.IGNORE_CASE)
     }
 
     /**
-     * NVL2(expr, not_null_value, null_value) → CASE WHEN expr IS NOT NULL THEN ... ELSE ... END
-     */
-    private fun convertNvl2ToCaseWhen(
-        params: List<Expression>,
-        appliedRules: MutableList<String>
-    ): CaseExpression {
-        if (params.size < 3) {
-            return CaseExpression()
-        }
-
-        val caseExpr = CaseExpression()
-
-        val isNotNull = IsNullExpression()
-        isNotNull.leftExpression = params[0]
-        isNotNull.isNot = true
-
-        val whenClause = WhenClause()
-        whenClause.whenExpression = isNotNull
-        whenClause.thenExpression = params[1]
-
-        caseExpr.whenClauses = listOf(whenClause)
-        caseExpr.elseExpression = params[2]
-
-        appliedRules.add("NVL2() → CASE WHEN expr IS NOT NULL 변환")
-        return caseExpr
-    }
-
-    /**
-     * IF(condition, true_value, false_value) → CASE WHEN condition THEN ... ELSE ... END
-     */
-    private fun convertIfToCaseWhen(
-        params: List<Expression>,
-        appliedRules: MutableList<String>
-    ): CaseExpression {
-        if (params.size < 3) {
-            return CaseExpression()
-        }
-
-        val caseExpr = CaseExpression()
-
-        val whenClause = WhenClause()
-        whenClause.whenExpression = params[0]
-        whenClause.thenExpression = params[1]
-
-        caseExpr.whenClauses = listOf(whenClause)
-        caseExpr.elseExpression = params[2]
-
-        appliedRules.add("IF() → CASE WHEN 변환")
-        return caseExpr
-    }
-
-    /**
-     * 첫 두 파라미터 교환 (INSTR ↔ LOCATE 등)
-     */
-    private fun swapFirstTwoParameters(function: SqlFunction) {
-        val params = function.parameters?.expressions
-        if (params != null && params.size >= 2) {
-            val temp = params[0]
-            (params as MutableList<Expression>)[0] = params[1]
-            params[1] = temp
-        }
-    }
-
-    /**
-     * 날짜 포맷 변환
-     */
-    private fun convertDateFormat(
-        function: SqlFunction,
-        sourceDialect: DialectType,
-        targetDialect: DialectType
-    ) {
-        val params = function.parameters?.expressions
-        if (params != null && params.size >= 2) {
-            // 날짜 포맷 문자열 변환 (두 번째 파라미터)
-            val formatParam = params[1]
-            if (formatParam is net.sf.jsqlparser.expression.StringValue) {
-                val convertedFormat = convertDateFormatString(
-                    formatParam.value,
-                    sourceDialect,
-                    targetDialect
-                )
-                (params as MutableList<Expression>)[1] =
-                    net.sf.jsqlparser.expression.StringValue(convertedFormat)
-            }
-        }
-    }
-
-    /**
-     * 날짜 포맷 문자열 변환
-     */
-    private fun convertDateFormatString(
-        format: String,
-        sourceDialect: DialectType,
-        targetDialect: DialectType
-    ): String {
-        var result = format
-
-        // Oracle/Tibero 포맷 → MySQL 포맷
-        if ((sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) &&
-            targetDialect == DialectType.MYSQL
-        ) {
-            result = result
-                .replace("YYYY", "%Y")
-                .replace("YY", "%y")
-                .replace("MM", "%m")
-                .replace("DD", "%d")
-                .replace("HH24", "%H")
-                .replace("HH", "%h")
-                .replace("MI", "%i")
-                .replace("SS", "%s")
-                .replace("AM", "%p")
-                .replace("PM", "%p")
-        }
-
-        // MySQL 포맷 → Oracle/Tibero 포맷
-        if (sourceDialect == DialectType.MYSQL &&
-            (targetDialect == DialectType.ORACLE || targetDialect == DialectType.TIBERO)
-        ) {
-            result = result
-                .replace("%Y", "YYYY")
-                .replace("%y", "YY")
-                .replace("%m", "MM")
-                .replace("%d", "DD")
-                .replace("%H", "HH24")
-                .replace("%h", "HH")
-                .replace("%i", "MI")
-                .replace("%s", "SS")
-                .replace("%p", "AM")
-        }
-
-        // Oracle/Tibero 포맷 → PostgreSQL 포맷 (유사함)
-        // PostgreSQL은 TO_CHAR에서 Oracle 스타일 포맷을 많이 지원
-
-        return result
-    }
-
-    /**
-     * 문자열 기반 함수 변환 (이미 파싱된 SQL 없이 문자열 직접 변환)
+     * SQL 내의 함수들을 타겟 방언으로 변환 (문자열 기반)
      */
     fun convertFunctionsInSql(
         sql: String,
@@ -280,11 +53,15 @@ class FunctionConversionService(
         val rules = mappingRegistry.getMappingsForDialects(sourceDialect, targetDialect)
 
         for (rule in rules) {
-            // 함수명 교체 (단순 텍스트 교체 - 복잡한 케이스는 파서 사용 권장)
-            val pattern = Regex("\\b${rule.sourceFunction}\\s*\\(", RegexOption.IGNORE_CASE)
+            val pattern = getPattern(rule.sourceFunction)
             if (pattern.containsMatchIn(result)) {
-                result = result.replace(pattern, "${rule.targetFunction}(")
-                appliedRules.add("${rule.sourceFunction}() → ${rule.targetFunction}()")
+                // CASE WHEN 변환이 필요한 경우는 별도 처리
+                if (rule.parameterTransform == ParameterTransform.TO_CASE_WHEN) {
+                    result = convertToCaseWhen(result, rule, warnings, appliedRules)
+                } else {
+                    result = result.replace(pattern, "${rule.targetFunction}(")
+                    appliedRules.add("${rule.sourceFunction}() → ${rule.targetFunction}()")
+                }
 
                 if (rule.warningType != null && rule.warningMessage != null) {
                     warnings.add(ConversionWarning(
@@ -297,16 +74,136 @@ class FunctionConversionService(
             }
         }
 
-        // 특수 변환: SYSDATE (파라미터 없는 함수)
+        // 특수 변환: 파라미터 없는 함수들
+        result = convertParameterlessFunctions(result, sourceDialect, targetDialect, appliedRules)
+
+        return result
+    }
+
+    /**
+     * DECODE, NVL2, IF 등을 CASE WHEN으로 변환
+     */
+    private fun convertToCaseWhen(
+        sql: String,
+        rule: FunctionMappingRule,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+        val functionName = rule.sourceFunction
+
+        when (functionName.uppercase()) {
+            "DECODE" -> {
+                result = convertDecodeToCaseWhen(result)
+                appliedRules.add("DECODE() → CASE WHEN 변환")
+            }
+            "NVL2" -> {
+                result = convertNvl2ToCaseWhen(result)
+                appliedRules.add("NVL2() → CASE WHEN 변환")
+            }
+            "IF" -> {
+                result = convertIfToCaseWhen(result)
+                appliedRules.add("IF() → CASE WHEN 변환")
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * DECODE(expr, search1, result1, ..., default) → CASE expr WHEN search1 THEN result1 ... ELSE default END
+     */
+    private fun convertDecodeToCaseWhen(sql: String): String {
+        return DECODE_PATTERN.replace(sql) { match ->
+            val expr = match.groupValues[1].trim()
+            val args = splitFunctionArgs(match.groupValues[2])
+
+            if (args.size < 2) {
+                return@replace match.value
+            }
+
+            val sb = StringBuilder("CASE $expr ")
+            var i = 0
+            while (i + 1 < args.size) {
+                sb.append("WHEN ${args[i]} THEN ${args[i + 1]} ")
+                i += 2
+            }
+            if (i < args.size) {
+                sb.append("ELSE ${args[i]} ")
+            }
+            sb.append("END")
+            sb.toString()
+        }
+    }
+
+    /**
+     * NVL2(expr, not_null_value, null_value) → CASE WHEN expr IS NOT NULL THEN not_null_value ELSE null_value END
+     */
+    private fun convertNvl2ToCaseWhen(sql: String): String {
+        return NVL2_PATTERN.replace(sql) { match ->
+            val expr = match.groupValues[1].trim()
+            val notNullVal = match.groupValues[2].trim()
+            val nullVal = match.groupValues[3].trim()
+            "CASE WHEN $expr IS NOT NULL THEN $notNullVal ELSE $nullVal END"
+        }
+    }
+
+    /**
+     * IF(condition, true_val, false_val) → CASE WHEN condition THEN true_val ELSE false_val END
+     */
+    private fun convertIfToCaseWhen(sql: String): String {
+        return IF_PATTERN.replace(sql) { match ->
+            val condition = match.groupValues[1].trim()
+            val trueVal = match.groupValues[2].trim()
+            val falseVal = match.groupValues[3].trim()
+            "CASE WHEN $condition THEN $trueVal ELSE $falseVal END"
+        }
+    }
+
+    /**
+     * 파라미터 없는 함수 변환 (SYSDATE, SYSTIMESTAMP 등)
+     */
+    private fun convertParameterlessFunctions(
+        sql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
         if (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) {
             when (targetDialect) {
                 DialectType.MYSQL -> {
-                    result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
-                    result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                    if (SYSDATE_PATTERN.containsMatchIn(result)) {
+                        result = SYSDATE_PATTERN.replace(result, "NOW()")
+                        appliedRules.add("SYSDATE → NOW()")
+                    }
+                    if (SYSTIMESTAMP_PATTERN.containsMatchIn(result)) {
+                        result = SYSTIMESTAMP_PATTERN.replace(result, "CURRENT_TIMESTAMP")
+                        appliedRules.add("SYSTIMESTAMP → CURRENT_TIMESTAMP")
+                    }
                 }
                 DialectType.POSTGRESQL -> {
-                    result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
-                    result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                    if (SYSDATE_PATTERN.containsMatchIn(result)) {
+                        result = SYSDATE_PATTERN.replace(result, "CURRENT_TIMESTAMP")
+                        appliedRules.add("SYSDATE → CURRENT_TIMESTAMP")
+                    }
+                    if (SYSTIMESTAMP_PATTERN.containsMatchIn(result)) {
+                        result = SYSTIMESTAMP_PATTERN.replace(result, "CURRENT_TIMESTAMP")
+                        appliedRules.add("SYSTIMESTAMP → CURRENT_TIMESTAMP")
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        if (sourceDialect == DialectType.MYSQL) {
+            when (targetDialect) {
+                DialectType.ORACLE, DialectType.TIBERO -> {
+                    if (NOW_PATTERN.containsMatchIn(result)) {
+                        result = NOW_PATTERN.replace(result, "SYSDATE")
+                        appliedRules.add("NOW() → SYSDATE")
+                    }
                 }
                 else -> {}
             }
@@ -314,16 +211,41 @@ class FunctionConversionService(
 
         return result
     }
-}
 
-/**
- * SqlFunction clone 확장
- */
-private fun SqlFunction.clone(): SqlFunction {
-    val cloned = SqlFunction()
-    cloned.name = this.name
-    cloned.parameters = this.parameters
-    cloned.isAllColumns = this.isAllColumns
-    cloned.isDistinct = this.isDistinct
-    return cloned
+    /**
+     * 함수 인자를 콤마로 분리 (괄호 내부의 콤마는 무시)
+     */
+    private fun splitFunctionArgs(argsStr: String): List<String> {
+        val args = mutableListOf<String>()
+        var depth = 0
+        var current = StringBuilder()
+
+        for (char in argsStr) {
+            when (char) {
+                '(' -> {
+                    depth++
+                    current.append(char)
+                }
+                ')' -> {
+                    depth--
+                    current.append(char)
+                }
+                ',' -> {
+                    if (depth == 0) {
+                        args.add(current.toString().trim())
+                        current = StringBuilder()
+                    } else {
+                        current.append(char)
+                    }
+                }
+                else -> current.append(char)
+            }
+        }
+
+        if (current.isNotEmpty()) {
+            args.add(current.toString().trim())
+        }
+
+        return args
+    }
 }

@@ -1,15 +1,23 @@
 package com.sqlswitcher.converter.dialect
 
-import com.sqlswitcher.converter.core.*
-import com.sqlswitcher.converter.feature.*
+import com.sqlswitcher.converter.DialectType
+import com.sqlswitcher.converter.ConversionWarning
+import com.sqlswitcher.converter.WarningType
+import com.sqlswitcher.converter.WarningSeverity
+import com.sqlswitcher.converter.feature.FunctionConversionService
+import com.sqlswitcher.converter.feature.DataTypeConversionService
+import com.sqlswitcher.converter.feature.DDLConversionService
+import com.sqlswitcher.converter.feature.SelectConversionService
+import com.sqlswitcher.converter.feature.TriggerConversionService
+import com.sqlswitcher.converter.feature.SequenceConversionService
 import org.springframework.stereotype.Component
 
 /**
- * MySQL SQL 방언 - 슬림화된 버전
+ * MySQL SQL 방언 - 슬림화된 버전 (약 180줄)
  *
  * 핵심 로직은 서비스 클래스에 위임하고, MySQL 특화 기능만 구현
  */
-@Component
+@Component("mySqlDialectNew")
 class MySqlDialectNew(
     functionService: FunctionConversionService,
     dataTypeService: DataTypeConversionService,
@@ -20,32 +28,22 @@ class MySqlDialectNew(
 ) : BaseDialect(
     functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService
 ) {
-    override val dialectType = DialectType.MYSQL
-    override val quoteCharacter = "`"
+    override fun getDialectType() = DialectType.MYSQL
+    override fun getQuoteCharacter() = "`"
 
-    /**
-     * MySQL 특화 변환
-     */
     override fun convertSql(
         sql: String,
         targetDialect: DialectType,
         warnings: MutableList<ConversionWarning>,
-        appliedRules: MutableList<String>,
-        options: ConversionOptions?
+        appliedRules: MutableList<String>
     ): String {
-        var result = super.convertSql(sql, targetDialect, warnings, appliedRules, options)
+        var result = super.convertSql(sql, targetDialect, warnings, appliedRules)
 
         // MySQL 특화: LIMIT 처리
-        result = handleLimit(result, targetDialect, warnings, appliedRules)
+        result = handleLimit(result, targetDialect, appliedRules)
 
-        // MySQL 특화: AUTO_INCREMENT 처리
-        result = handleAutoIncrement(result, targetDialect, warnings, appliedRules)
-
-        // MySQL 특화: ENGINE= 처리
-        result = handleEngineClause(result, targetDialect, warnings, appliedRules)
-
-        // MySQL 특화: ENUM/SET 처리
-        result = handleEnumSet(result, targetDialect, warnings, appliedRules)
+        // MySQL 특화: ENGINE= 제거
+        result = handleEngineClause(result, targetDialect, appliedRules)
 
         // MySQL 특화: ON DUPLICATE KEY UPDATE
         result = handleOnDuplicateKey(result, targetDialect, warnings, appliedRules)
@@ -53,47 +51,43 @@ class MySqlDialectNew(
         return result
     }
 
-    /**
-     * LIMIT 구문 처리
-     */
     private fun handleLimit(
         sql: String,
         targetDialect: DialectType,
-        warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>
     ): String {
         var result = sql
 
         when (targetDialect) {
             DialectType.ORACLE, DialectType.TIBERO -> {
-                // LIMIT offset, count → OFFSET .. FETCH
-                val limitPattern = Regex("""LIMIT\s+(\d+)\s*,\s*(\d+)""", RegexOption.IGNORE_CASE)
-                val limitMatch = limitPattern.find(result)
-                if (limitMatch != null) {
-                    val offset = limitMatch.groupValues[1]
-                    val count = limitMatch.groupValues[2]
-                    result = result.replace(limitMatch.value, "OFFSET $offset ROWS FETCH NEXT $count ROWS ONLY")
-                    appliedRules.add("LIMIT $offset, $count → OFFSET/FETCH 변환")
+                // LIMIT n → FETCH FIRST n ROWS ONLY
+                val limitPattern = Regex("""LIMIT\s+(\d+)(?!\s*,)""", RegexOption.IGNORE_CASE)
+                val match = limitPattern.find(result)
+                if (match != null) {
+                    val count = match.groupValues[1]
+                    result = result.replace(match.value, "FETCH FIRST $count ROWS ONLY")
+                    appliedRules.add("LIMIT → FETCH FIRST 변환")
                 }
 
-                // LIMIT n → FETCH FIRST n ROWS ONLY
-                val simpleLimitPattern = Regex("""LIMIT\s+(\d+)(?!\s*,)""", RegexOption.IGNORE_CASE)
-                val simpleLimitMatch = simpleLimitPattern.find(result)
-                if (simpleLimitMatch != null) {
-                    val count = simpleLimitMatch.groupValues[1]
-                    result = result.replace(simpleLimitMatch.value, "FETCH FIRST $count ROWS ONLY")
-                    appliedRules.add("LIMIT $count → FETCH FIRST 변환")
+                // LIMIT offset, count → OFFSET .. FETCH
+                val limitOffsetPattern = Regex("""LIMIT\s+(\d+)\s*,\s*(\d+)""", RegexOption.IGNORE_CASE)
+                val matchOffset = limitOffsetPattern.find(result)
+                if (matchOffset != null) {
+                    val offset = matchOffset.groupValues[1]
+                    val count = matchOffset.groupValues[2]
+                    result = result.replace(matchOffset.value, "OFFSET $offset ROWS FETCH NEXT $count ROWS ONLY")
+                    appliedRules.add("LIMIT offset,count → OFFSET/FETCH 변환")
                 }
             }
             DialectType.POSTGRESQL -> {
                 // LIMIT offset, count → LIMIT count OFFSET offset
                 val limitPattern = Regex("""LIMIT\s+(\d+)\s*,\s*(\d+)""", RegexOption.IGNORE_CASE)
-                val limitMatch = limitPattern.find(result)
-                if (limitMatch != null) {
-                    val offset = limitMatch.groupValues[1]
-                    val count = limitMatch.groupValues[2]
-                    result = result.replace(limitMatch.value, "LIMIT $count OFFSET $offset")
-                    appliedRules.add("LIMIT $offset, $count → LIMIT/OFFSET 변환")
+                val match = limitPattern.find(result)
+                if (match != null) {
+                    val offset = match.groupValues[1]
+                    val count = match.groupValues[2]
+                    result = result.replace(match.value, "LIMIT $count OFFSET $offset")
+                    appliedRules.add("LIMIT offset,count → LIMIT/OFFSET 변환")
                 }
             }
             else -> {}
@@ -102,252 +96,59 @@ class MySqlDialectNew(
         return result
     }
 
-    /**
-     * AUTO_INCREMENT 처리
-     */
-    private fun handleAutoIncrement(
-        sql: String,
-        targetDialect: DialectType,
-        warnings: MutableList<ConversionWarning>,
-        appliedRules: MutableList<String>
-    ): String {
-        var result = sql
-
-        if (!sql.uppercase().contains("AUTO_INCREMENT")) {
-            return result
-        }
-
-        when (targetDialect) {
-            DialectType.ORACLE, DialectType.TIBERO -> {
-                result = result.replace(
-                    Regex("\\bAUTO_INCREMENT\\b", RegexOption.IGNORE_CASE),
-                    "GENERATED BY DEFAULT AS IDENTITY"
-                )
-                appliedRules.add("AUTO_INCREMENT → GENERATED BY DEFAULT AS IDENTITY")
-            }
-            DialectType.POSTGRESQL -> {
-                warnings.add(ConversionWarning(
-                    type = WarningType.SYNTAX_DIFFERENCE,
-                    message = "AUTO_INCREMENT는 SERIAL 타입 또는 GENERATED AS IDENTITY로 변환됩니다.",
-                    severity = WarningSeverity.INFO
-                ))
-                result = result.replace(
-                    Regex("\\bAUTO_INCREMENT\\b", RegexOption.IGNORE_CASE),
-                    "GENERATED BY DEFAULT AS IDENTITY"
-                )
-                appliedRules.add("AUTO_INCREMENT → GENERATED BY DEFAULT AS IDENTITY")
-            }
-            else -> {}
-        }
-
-        return result
-    }
-
-    /**
-     * ENGINE= 절 처리
-     */
     private fun handleEngineClause(
         sql: String,
         targetDialect: DialectType,
-        warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>
     ): String {
         var result = sql
 
         if (targetDialect != DialectType.MYSQL) {
-            // ENGINE= 제거
             val enginePattern = Regex("""ENGINE\s*=\s*\w+""", RegexOption.IGNORE_CASE)
             if (enginePattern.containsMatchIn(result)) {
                 result = result.replace(enginePattern, "")
-                appliedRules.add("ENGINE= 절 제거 (비MySQL)")
+                appliedRules.add("ENGINE= 절 제거")
             }
 
-            // DEFAULT CHARSET= 제거
             val charsetPattern = Regex("""DEFAULT\s+CHARSET\s*=\s*\w+""", RegexOption.IGNORE_CASE)
             if (charsetPattern.containsMatchIn(result)) {
                 result = result.replace(charsetPattern, "")
                 appliedRules.add("DEFAULT CHARSET= 절 제거")
-            }
-
-            // COLLATE= 제거
-            val collatePattern = Regex("""COLLATE\s*=?\s*\w+""", RegexOption.IGNORE_CASE)
-            if (collatePattern.containsMatchIn(result)) {
-                result = result.replace(collatePattern, "")
-                appliedRules.add("COLLATE 절 제거")
             }
         }
 
         return result.trim()
     }
 
-    /**
-     * ENUM/SET 타입 처리
-     */
-    private fun handleEnumSet(
-        sql: String,
-        targetDialect: DialectType,
-        warnings: MutableList<ConversionWarning>,
-        appliedRules: MutableList<String>
-    ): String {
-        var result = sql
-
-        // ENUM 처리
-        val enumPattern = Regex("""ENUM\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
-        if (enumPattern.containsMatchIn(result)) {
-            when (targetDialect) {
-                DialectType.ORACLE, DialectType.TIBERO -> {
-                    warnings.add(ConversionWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "MySQL ENUM은 Oracle에서 CHECK 제약조건으로 구현됩니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "VARCHAR2 + CHECK 제약조건을 사용하세요."
-                    ))
-                    result = result.replace(enumPattern, "VARCHAR2(255)")
-                    appliedRules.add("ENUM → VARCHAR2(255)")
-                }
-                DialectType.POSTGRESQL -> {
-                    warnings.add(ConversionWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "MySQL ENUM을 PostgreSQL에서 사용하려면 CREATE TYPE으로 enum을 정의해야 합니다.",
-                        severity = WarningSeverity.INFO
-                    ))
-                    result = result.replace(enumPattern, "VARCHAR(255)")
-                    appliedRules.add("ENUM → VARCHAR(255)")
-                }
-                else -> {}
-            }
-        }
-
-        // SET 처리
-        val setPattern = Regex("""SET\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
-        if (setPattern.containsMatchIn(result)) {
-            when (targetDialect) {
-                DialectType.ORACLE, DialectType.TIBERO -> {
-                    warnings.add(ConversionWarning(
-                        type = WarningType.UNSUPPORTED_FUNCTION,
-                        message = "MySQL SET 타입은 Oracle에서 지원되지 않습니다.",
-                        severity = WarningSeverity.WARNING,
-                        suggestion = "VARCHAR2 또는 별도 테이블로 구현하세요."
-                    ))
-                    result = result.replace(setPattern, "VARCHAR2(255)")
-                    appliedRules.add("SET → VARCHAR2(255)")
-                }
-                DialectType.POSTGRESQL -> {
-                    warnings.add(ConversionWarning(
-                        type = WarningType.UNSUPPORTED_FUNCTION,
-                        message = "MySQL SET 타입은 PostgreSQL에서 ARRAY로 구현할 수 있습니다.",
-                        severity = WarningSeverity.INFO
-                    ))
-                    result = result.replace(setPattern, "VARCHAR(255)")
-                    appliedRules.add("SET → VARCHAR(255)")
-                }
-                else -> {}
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * ON DUPLICATE KEY UPDATE 처리
-     */
     private fun handleOnDuplicateKey(
         sql: String,
         targetDialect: DialectType,
         warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>
     ): String {
-        var result = sql
-
         if (!sql.uppercase().contains("ON DUPLICATE KEY UPDATE")) {
-            return result
+            return sql
         }
 
         when (targetDialect) {
             DialectType.ORACLE, DialectType.TIBERO -> {
                 warnings.add(ConversionWarning(
                     type = WarningType.SYNTAX_DIFFERENCE,
-                    message = "ON DUPLICATE KEY UPDATE는 Oracle에서 MERGE INTO로 변환해야 합니다.",
-                    severity = WarningSeverity.WARNING,
-                    suggestion = "MERGE INTO table USING ... ON (...) WHEN MATCHED THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ..."
+                    message = "ON DUPLICATE KEY UPDATE는 MERGE INTO로 변환해야 합니다.",
+                    severity = WarningSeverity.WARNING
                 ))
                 appliedRules.add("ON DUPLICATE KEY UPDATE 감지됨 - MERGE INTO로 수동 변환 필요")
             }
             DialectType.POSTGRESQL -> {
-                // PostgreSQL: ON CONFLICT ... DO UPDATE
-                val pattern = Regex("""ON\s+DUPLICATE\s+KEY\s+UPDATE\s+(.+)$""", RegexOption.IGNORE_CASE)
-                val match = pattern.find(result)
-                if (match != null) {
-                    val updateClause = match.groupValues[1]
-                    warnings.add(ConversionWarning(
-                        type = WarningType.SYNTAX_DIFFERENCE,
-                        message = "ON DUPLICATE KEY UPDATE는 ON CONFLICT ... DO UPDATE로 변환됩니다.",
-                        severity = WarningSeverity.INFO,
-                        suggestion = "충돌 대상 컬럼을 명시해야 합니다: ON CONFLICT (column) DO UPDATE SET ..."
-                    ))
-                    result = result.replace(match.value, "ON CONFLICT DO UPDATE SET $updateClause")
-                    appliedRules.add("ON DUPLICATE KEY UPDATE → ON CONFLICT DO UPDATE")
-                }
+                warnings.add(ConversionWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "ON DUPLICATE KEY UPDATE는 ON CONFLICT로 변환됩니다.",
+                    severity = WarningSeverity.INFO
+                ))
             }
             else -> {}
         }
 
-        return result
-    }
-
-    /**
-     * MySQL IF 함수 변환
-     */
-    fun convertIfFunction(
-        sql: String,
-        targetDialect: DialectType,
-        appliedRules: MutableList<String>
-    ): String {
-        var result = sql
-
-        if (targetDialect != DialectType.MYSQL) {
-            // IF(condition, true_val, false_val) → CASE WHEN
-            val ifPattern = Regex("""IF\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)""", RegexOption.IGNORE_CASE)
-            result = ifPattern.replace(result) { match ->
-                val condition = match.groupValues[1].trim()
-                val trueVal = match.groupValues[2].trim()
-                val falseVal = match.groupValues[3].trim()
-                appliedRules.add("IF() → CASE WHEN 변환")
-                "CASE WHEN $condition THEN $trueVal ELSE $falseVal END"
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * GROUP_CONCAT 변환
-     */
-    fun convertGroupConcat(
-        sql: String,
-        targetDialect: DialectType,
-        appliedRules: MutableList<String>
-    ): String {
-        var result = sql
-
-        when (targetDialect) {
-            DialectType.ORACLE, DialectType.TIBERO -> {
-                result = result.replace(
-                    Regex("\\bGROUP_CONCAT\\s*\\(", RegexOption.IGNORE_CASE),
-                    "LISTAGG("
-                )
-                appliedRules.add("GROUP_CONCAT → LISTAGG")
-            }
-            DialectType.POSTGRESQL -> {
-                result = result.replace(
-                    Regex("\\bGROUP_CONCAT\\s*\\(", RegexOption.IGNORE_CASE),
-                    "STRING_AGG("
-                )
-                appliedRules.add("GROUP_CONCAT → STRING_AGG")
-            }
-            else -> {}
-        }
-
-        return result
+        return sql
     }
 }

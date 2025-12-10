@@ -65,9 +65,9 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
       style={{ height }}
     >
       {/* 데스크톱 레이아웃 */}
-      <div className="hidden md:flex border-2 border-gray-300 overflow-hidden h-full">
+      <div className="hidden md:flex border-2 border-gray-300 rounded-lg overflow-hidden h-full">
         {/* 왼쪽 에디터 (입력) */}
-        <div 
+        <div
           className="flex-shrink-0 border-r border-gray-300"
           style={{ width: `${leftWidth}%` }}
         >
@@ -90,7 +90,7 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
         </div>
 
         {/* 오른쪽 에디터 (출력) */}
-        <div 
+        <div
           className="flex-1"
           style={{ width: `${100 - leftWidth}%` }}
         >
@@ -105,10 +105,10 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
       </div>
 
       {/* 모바일 레이아웃 */}
-      <div className="md:hidden h-full flex flex-col gap-4">
-        <div className="flex-1 flex flex-col border-2 border-gray-300 overflow-hidden">
-          <div className="bg-gray-100 px-3 py-2 border-b border-gray-200 flex-shrink-0">
-            <h4 className="text-sm font-medium text-gray-700">원본 SQL</h4>
+      <div className="md:hidden h-full flex flex-col gap-2">
+        <div className="flex-1 flex flex-col border-2 border-gray-300 rounded-lg overflow-hidden min-h-[180px]">
+          <div className="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex-shrink-0">
+            <h4 className="text-xs font-medium text-gray-700">원본 SQL</h4>
           </div>
           <div className="flex-1 min-h-0">
             <SqlEditor
@@ -120,9 +120,9 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col border-2 border-gray-300 overflow-hidden">
-          <div className="bg-gray-100 px-3 py-2 border-b border-gray-200 flex-shrink-0">
-            <h4 className="text-sm font-medium text-gray-700">변환된 SQL</h4>
+        <div className="flex-1 flex flex-col border-2 border-gray-300 rounded-lg overflow-hidden min-h-[180px]">
+          <div className="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex-shrink-0">
+            <h4 className="text-xs font-medium text-gray-700">변환된 SQL</h4>
           </div>
           <div className="flex-1 min-h-0">
             <SqlEditor

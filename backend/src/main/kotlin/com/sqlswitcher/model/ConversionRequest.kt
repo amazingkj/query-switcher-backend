@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Size
 
 data class ConversionRequest(
     @field:NotBlank(message = "SQL cannot be blank")
-    @field:Size(max = 50000, message = "SQL cannot exceed 50,000 characters")
+    @field:Size(max = 1000000, message = "SQL cannot exceed 1,000,000 characters")
     val sql: String,
     
     @field:NotNull(message = "Source dialect is required")

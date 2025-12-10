@@ -1572,6 +1572,71 @@ $sql
     ): String {
         val partitionInfo = extractTablePartitionInfo(partitionSql)
 
+        // INTERVAL 파티션 경고
+        if (partitionInfo.intervalExpression != null) {
+            when (targetDialect) {
+                DialectType.MYSQL -> {
+                    warnings.add(createWarning(
+                        type = WarningType.UNSUPPORTED_FUNCTION,
+                        message = "MySQL은 INTERVAL 파티셔닝을 지원하지 않습니다. INTERVAL(${partitionInfo.intervalExpression}) 구문이 제거됩니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "수동으로 파티션을 추가하거나 이벤트 스케줄러로 파티션 자동 추가 프로시저를 구현하세요."
+                    ))
+                    appliedRules.add("INTERVAL 파티션 감지됨 - MySQL에서 지원되지 않음")
+                }
+                DialectType.POSTGRESQL -> {
+                    warnings.add(createWarning(
+                        type = WarningType.UNSUPPORTED_FUNCTION,
+                        message = "PostgreSQL은 INTERVAL 파티셔닝을 직접 지원하지 않습니다. INTERVAL(${partitionInfo.intervalExpression}) 구문이 제거됩니다.",
+                        severity = WarningSeverity.WARNING,
+                        suggestion = "pg_partman 확장을 사용하거나 수동으로 파티션을 관리하세요."
+                    ))
+                    appliedRules.add("INTERVAL 파티션 감지됨 - PostgreSQL에서 수동 관리 필요")
+                }
+                else -> {}
+            }
+        }
+
+        // SUBPARTITIONS STORE IN 경고
+        val hasSubpartitions = partitionInfo.partitions.any { it.subpartitionCount != null || it.subpartitions.isNotEmpty() }
+        if (hasSubpartitions) {
+            when (targetDialect) {
+                DialectType.MYSQL -> {
+                    if (partitionInfo.subpartitionType == PartitionType.HASH || partitionInfo.subpartitionType == PartitionType.KEY) {
+                        appliedRules.add("HASH/KEY 서브파티션 → MySQL 형식으로 변환")
+                    } else if (partitionInfo.subpartitionType != null) {
+                        warnings.add(createWarning(
+                            type = WarningType.SYNTAX_DIFFERENCE,
+                            message = "MySQL은 HASH/KEY 서브파티션만 지원합니다. ${partitionInfo.subpartitionType} 서브파티션은 제거됩니다.",
+                            severity = WarningSeverity.WARNING,
+                            suggestion = "서브파티션 타입을 HASH 또는 KEY로 변경하거나 서브파티션을 제거하세요."
+                        ))
+                    }
+                }
+                DialectType.POSTGRESQL -> {
+                    warnings.add(createWarning(
+                        type = WarningType.SYNTAX_DIFFERENCE,
+                        message = "PostgreSQL 서브파티션은 파티션된 테이블의 파티션으로 구현됩니다.",
+                        severity = WarningSeverity.INFO,
+                        suggestion = "각 파티션을 다시 파티셔닝하는 방식으로 서브파티션을 구현하세요."
+                    ))
+                }
+                else -> {}
+            }
+        }
+
+        // 파티션별 TABLESPACE 경고
+        val hasPartitionTablespace = partitionInfo.partitions.any { it.tablespace != null }
+        if (hasPartitionTablespace && targetDialect == DialectType.MYSQL) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "MySQL은 파티션별 TABLESPACE를 제한적으로 지원합니다.",
+                severity = WarningSeverity.INFO,
+                suggestion = "InnoDB에서는 파티션별 TABLESPACE를 사용할 수 있지만, 별도 설정이 필요합니다."
+            ))
+            appliedRules.add("파티션별 TABLESPACE 감지됨 - MySQL에서 제한적 지원")
+        }
+
         return when (targetDialect) {
             DialectType.MYSQL -> {
                 appliedRules.add("Oracle 파티션 테이블 → MySQL 형식으로 변환")
@@ -1627,8 +1692,25 @@ $sql
         val partitionColumns = partitionColRegex.find(sql)?.groupValues?.get(1)
             ?.split(",")?.map { it.trim().trim('"') } ?: emptyList()
 
-        // 파티션 정의 추출
-        val partitions = extractPartitionDefinitions(sql, partitionType)
+        // 서브파티션 타입 추출 (SUBPARTITION BY HASH/RANGE/LIST)
+        val subpartitionType = when {
+            upperSql.contains("SUBPARTITION BY HASH") -> PartitionType.HASH
+            upperSql.contains("SUBPARTITION BY RANGE") -> PartitionType.RANGE
+            upperSql.contains("SUBPARTITION BY LIST") -> PartitionType.LIST
+            else -> null
+        }
+
+        // 서브파티션 컬럼 추출
+        val subpartitionColRegex = """SUBPARTITION\s+BY\s+\w+\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
+        val subpartitionColumns = subpartitionColRegex.find(sql)?.groupValues?.get(1)
+            ?.split(",")?.map { it.trim().trim('"') } ?: emptyList()
+
+        // 글로벌 SUBPARTITIONS count 추출 (파티션 정의 앞에 있는)
+        val globalSubpartitionCountRegex = """SUBPARTITIONS\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE)
+        val globalSubpartitionCount = globalSubpartitionCountRegex.find(sql)?.groupValues?.get(1)?.toIntOrNull()
+
+        // 파티션 정의 추출 (TABLESPACE, 서브파티션 정보 포함)
+        val partitions = extractPartitionDefinitions(sql, partitionType, globalSubpartitionCount)
 
         // INTERVAL 추출 (Oracle 11g+ interval partitioning)
         val intervalRegex = """INTERVAL\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
@@ -1639,51 +1721,91 @@ $sql
             partitionType = partitionType,
             partitionColumns = partitionColumns,
             partitions = partitions,
+            subpartitionType = subpartitionType,
+            subpartitionColumns = subpartitionColumns,
             intervalExpression = intervalExpression
         )
     }
 
     /**
-     * 파티션 정의 추출
+     * 파티션 정의 추출 (TABLESPACE 및 서브파티션 정보 포함)
      */
-    private fun extractPartitionDefinitions(sql: String, partitionType: PartitionType): List<PartitionDefinition> {
+    private fun extractPartitionDefinitions(
+        sql: String,
+        partitionType: PartitionType,
+        globalSubpartitionCount: Int? = null
+    ): List<PartitionDefinition> {
         val partitions = mutableListOf<PartitionDefinition>()
 
-        when (partitionType) {
-            PartitionType.RANGE -> {
-                // PARTITION name VALUES LESS THAN (value)
-                val rangeRegex = """PARTITION\s+"?(\w+)"?\s+VALUES\s+LESS\s+THAN\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
-                rangeRegex.findAll(sql).forEach { match ->
-                    partitions.add(PartitionDefinition(
-                        name = match.groupValues[1],
-                        values = match.groupValues[2].trim()
-                    ))
-                }
+        // 파티션별 블록을 추출하기 위한 패턴
+        // PARTITION name VALUES ... 부터 다음 PARTITION 또는 ) 전까지
+        val partitionBlockPattern = when (partitionType) {
+            PartitionType.RANGE -> """PARTITION\s+"?(\w+)"?\s+VALUES\s+LESS\s+THAN\s*\(([^)]+)\)([\s\S]*?)(?=PARTITION\s+"?\w|,\s*PARTITION|\)\s*;|\)\s*$|\Z)""".toRegex(RegexOption.IGNORE_CASE)
+            PartitionType.LIST -> """PARTITION\s+"?(\w+)"?\s+VALUES\s*\(([^)]+)\)([\s\S]*?)(?=PARTITION\s+"?\w|,\s*PARTITION|\)\s*;|\)\s*$|\Z)""".toRegex(RegexOption.IGNORE_CASE)
+            PartitionType.HASH -> """PARTITION\s+"?(\w+)"?([\s\S]*?)(?=PARTITION\s+"?\w|,\s*PARTITION|\)\s*;|\)\s*$|\Z)""".toRegex(RegexOption.IGNORE_CASE)
+            else -> return partitions
+        }
+
+        partitionBlockPattern.findAll(sql).forEach { match ->
+            val partitionName = match.groupValues[1]
+            val values = if (partitionType == PartitionType.HASH) "" else match.groupValues[2].trim()
+            val partitionBlock = if (partitionType == PartitionType.HASH) {
+                match.groupValues.getOrNull(2) ?: ""
+            } else {
+                match.groupValues.getOrNull(3) ?: ""
             }
-            PartitionType.LIST -> {
-                // PARTITION name VALUES (value1, value2, ...)
-                val listRegex = """PARTITION\s+"?(\w+)"?\s+VALUES\s*\(([^)]+)\)""".toRegex(RegexOption.IGNORE_CASE)
-                listRegex.findAll(sql).forEach { match ->
-                    partitions.add(PartitionDefinition(
-                        name = match.groupValues[1],
-                        values = match.groupValues[2].trim()
-                    ))
-                }
-            }
-            PartitionType.HASH -> {
-                // PARTITION name
-                val hashRegex = """PARTITION\s+"?(\w+)"?(?:\s+TABLESPACE|\s*,|\s*\))""".toRegex(RegexOption.IGNORE_CASE)
-                hashRegex.findAll(sql).forEach { match ->
-                    partitions.add(PartitionDefinition(
-                        name = match.groupValues[1],
-                        values = ""
-                    ))
-                }
-            }
-            else -> { }
+
+            // TABLESPACE 추출
+            val tablespaceRegex = """TABLESPACE\s+"?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+            val tablespace = tablespaceRegex.find(partitionBlock)?.groupValues?.get(1)
+
+            // 파티션별 SUBPARTITIONS 카운트 추출 (개별 파티션에 지정된 경우)
+            val subpartCountRegex = """SUBPARTITIONS\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE)
+            val subpartitionCount = subpartCountRegex.find(partitionBlock)?.groupValues?.get(1)?.toIntOrNull()
+                ?: globalSubpartitionCount
+
+            // 명시적 서브파티션 정의 추출
+            val subpartitions = extractSubpartitionDefinitions(partitionBlock, partitionName)
+
+            partitions.add(PartitionDefinition(
+                name = partitionName,
+                values = values,
+                tablespace = tablespace,
+                subpartitions = subpartitions,
+                subpartitionCount = subpartitionCount
+            ))
         }
 
         return partitions
+    }
+
+    /**
+     * 서브파티션 정의 추출
+     */
+    private fun extractSubpartitionDefinitions(partitionBlock: String, partitionName: String): List<SubpartitionDefinition> {
+        val subpartitions = mutableListOf<SubpartitionDefinition>()
+
+        // SUBPARTITION name [VALUES ...] [TABLESPACE ...]
+        val subpartPattern = """SUBPARTITION\s+"?(\w+)"?(?:\s+VALUES\s*\(([^)]+)\))?""".toRegex(RegexOption.IGNORE_CASE)
+
+        subpartPattern.findAll(partitionBlock).forEach { match ->
+            val subpartName = match.groupValues[1]
+            val subpartValues = match.groupValues.getOrNull(2)?.trim()
+
+            // 서브파티션 뒤의 TABLESPACE 찾기
+            val afterMatch = partitionBlock.substring(match.range.last + 1)
+            val tablespaceRegex = """^\s*TABLESPACE\s+"?(\w+)"?""".toRegex(RegexOption.IGNORE_CASE)
+            val subpartTablespace = tablespaceRegex.find(afterMatch)?.groupValues?.get(1)
+
+            subpartitions.add(SubpartitionDefinition(
+                name = subpartName,
+                partitionName = partitionName,
+                values = subpartValues,
+                tablespace = subpartTablespace
+            ))
+        }
+
+        return subpartitions
     }
 
     /**
