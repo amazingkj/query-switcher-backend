@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { DualSqlEditor } from './DualSqlEditor';
 import { DatabaseSelector } from './DatabaseSelector';
 import { WarningPanel } from './WarningPanel';
@@ -9,6 +9,7 @@ import { ConversionGuidePanel } from './ConversionGuidePanel';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { SqlDiffViewer } from './SqlDiffViewer';
 import { SqlValidationPanel } from './SqlValidationPanel';
+import { ThemeToggle } from './ThemeToggle';
 import { useSqlStore } from '../stores/sqlStore';
 import { useSqlConvert, useRealtimeConvert, useHealthCheck } from '../hooks/useSqlConvert';
 import { useConversionHistory } from '../hooks/useConversionHistory';
@@ -51,6 +52,9 @@ export const SqlConverter: React.FC = () => {
   const [isAnalyticsDashboardOpen, setIsAnalyticsDashboardOpen] = useState(false);
   const [isValidationPanelOpen, setIsValidationPanelOpen] = useState(false);
   const [showDiffView, setShowDiffView] = useState(false);
+
+  // 파일 업로드 ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const convertMutation = useSqlConvert();
   const realtimeConvertMutation = useRealtimeConvert();
@@ -202,35 +206,95 @@ export const SqlConverter: React.FC = () => {
     setTargetDialect(item.targetDialect);
     setOutputSql(item.convertedSql);
     setWarnings(item.warnings);
-    trackFeatureUse('conversion_history', { 
-      history_timestamp: item.timestamp 
+    trackFeatureUse('conversion_history', {
+      history_timestamp: item.timestamp
     });
   };
 
+  // SQL 파일 업로드 핸들러
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 파일 확장자 검증
+    if (!file.name.toLowerCase().endsWith('.sql')) {
+      toast.error('.sql 파일만 업로드할 수 있습니다.');
+      return;
+    }
+
+    // 파일 크기 검증 (5MB 제한)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('파일이 너무 큽니다. 최대 5MB까지 허용됩니다.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (content.length > SQL_MAX_LENGTH) {
+        toast.error(`SQL이 너무 깁니다. 최대 ${SQL_MAX_LENGTH.toLocaleString()}자까지 허용됩니다.`);
+        return;
+      }
+      setInputSql(content);
+      toast.success(`${file.name} 파일이 로드되었습니다.`);
+      trackFeatureUse('file_upload', { file_size: file.size });
+    };
+    reader.onerror = () => {
+      toast.error('파일을 읽는 중 오류가 발생했습니다.');
+    };
+    reader.readAsText(file);
+
+    // input 초기화 (같은 파일 재선택 가능하도록)
+    event.target.value = '';
+  };
+
+  // SQL 파일 다운로드 핸들러
+  const handleDownload = () => {
+    if (!outputSql) return;
+
+    const blob = new Blob([outputSql], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    // 파일명: converted_{target}_{timestamp}.sql
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+    link.href = url;
+    link.download = `converted_${targetDialect.toLowerCase()}_${timestamp}.sql`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast.success('파일이 다운로드되었습니다.');
+    trackFeatureUse('file_download', { output_length: outputSql.length });
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors duration-300">
       <div className="sql-converter max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
         {/* 헤더 */}
         <div className="mb-6 text-center sm:text-left">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
-                <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 dark:text-white mb-2">
+                <span className="bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
                   SQL Query Switcher
                 </span>
               </h1>
-              <p className="text-gray-600 text-sm sm:text-base">
+              <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">
                 데이터베이스 간 SQL 쿼리를 쉽게 변환하세요
               </p>
             </div>
-            {healthData && (
-              <div className="mt-4 sm:mt-0 flex items-center justify-center sm:justify-end">
-                <div className="flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+            <div className="mt-4 sm:mt-0 flex items-center justify-center sm:justify-end gap-3">
+              <ThemeToggle />
+              {healthData && (
+                <div className="flex items-center px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 rounded-full text-sm">
                   <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
                   서버 연결됨
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 
@@ -246,7 +310,7 @@ export const SqlConverter: React.FC = () => {
         <div className="mt-3 sm:mt-4 grid grid-cols-4 sm:flex sm:flex-wrap gap-1.5 sm:gap-2">
           <button
             onClick={handleSwapDatabases}
-            className="flex items-center justify-center p-2 sm:px-4 sm:py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:border-gray-400 hover:bg-gray-50 focus:outline-none focus:border-blue-500 focus:bg-gray-50 transition-all duration-200"
+            className="flex items-center justify-center p-2 sm:px-4 sm:py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:border-blue-500 focus:bg-gray-50 dark:focus:bg-gray-700 transition-all duration-200"
             title="방향 바꾸기"
           >
             <svg className="w-4 h-4 sm:w-3 sm:h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -314,14 +378,14 @@ export const SqlConverter: React.FC = () => {
             </svg>
             <span className="hidden sm:inline">분석</span>
           </button>
-          <label className="col-span-4 sm:col-span-1 flex items-center justify-center sm:justify-start px-3 py-2 sm:py-1.5 bg-gray-50 border border-gray-200 rounded-lg hover:border-gray-300 transition-all duration-200">
+          <label className="col-span-4 sm:col-span-1 flex items-center justify-center sm:justify-start px-3 py-2 sm:py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-gray-300 dark:hover:border-gray-500 transition-all duration-200">
             <input
               type="checkbox"
               checked={isAutoConvert}
               onChange={(e) => setAutoConvert(e.target.checked)}
-              className="w-3 h-3 text-blue-600 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 mr-2"
+              className="w-3 h-3 text-blue-600 border border-gray-300 dark:border-gray-500 rounded focus:ring-1 focus:ring-blue-500 mr-2"
             />
-            <span className="text-xs font-medium text-gray-700">자동 변환</span>
+            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">자동 변환</span>
           </label>
         </div>
       </div>
@@ -331,16 +395,16 @@ export const SqlConverter: React.FC = () => {
         {/* 모바일: 세로 배치, 데스크톱: 가로 배치 */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
           <div className="flex items-center gap-2 sm:gap-3">
-            <h3 className="text-sm sm:text-base font-semibold text-gray-800">SQL 변환기</h3>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">SQL 변환기</h3>
             {/* 뷰 모드 토글 */}
             {outputSql && (
-              <div className="flex bg-gray-200 rounded-lg p-0.5">
+              <div className="flex bg-gray-200 dark:bg-gray-700 rounded-lg p-0.5">
                 <button
                   onClick={() => setShowDiffView(false)}
                   className={`px-2 sm:px-3 py-1 text-xs font-medium rounded-md transition-all ${
                     !showDiffView
-                      ? 'bg-white text-gray-800 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-800'
+                      ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                   }`}
                 >
                   에디터
@@ -352,8 +416,8 @@ export const SqlConverter: React.FC = () => {
                   }}
                   className={`px-2 sm:px-3 py-1 text-xs font-medium rounded-md transition-all ${
                     showDiffView
-                      ? 'bg-white text-gray-800 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-800'
+                      ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                   }`}
                 >
                   <svg className="w-3 h-3 inline sm:mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -365,6 +429,24 @@ export const SqlConverter: React.FC = () => {
             )}
           </div>
           <div className="flex gap-1.5 sm:gap-2">
+            {/* 파일 업로드 (숨겨진 input) */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".sql"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:border-blue-500 transition-all duration-200"
+              title="SQL 파일 업로드"
+            >
+              <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              <span className="hidden sm:inline">업로드</span>
+            </button>
             <button
               onClick={handleConvert}
               disabled={!inputSql.trim() || isLoading}
@@ -385,6 +467,17 @@ export const SqlConverter: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               <span className="hidden sm:inline">복사</span>
+            </button>
+            <button
+              onClick={handleDownload}
+              disabled={!outputSql}
+              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-violet-700 transition-all duration-200"
+              title="다운로드"
+            >
+              <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span className="hidden sm:inline">다운로드</span>
             </button>
             <button
               onClick={() => {
@@ -473,8 +566,8 @@ export const SqlConverter: React.FC = () => {
       />
 
       {/* Copyright Footer */}
-      <div className="mt-12 pt-8 border-t border-gray-200">
-        <p className="text-center text-xs text-gray-400">
+      <div className="mt-12 pt-8 border-t border-gray-200 dark:border-gray-700">
+        <p className="text-center text-xs text-gray-400 dark:text-gray-500">
           © 2025 SQL2SQL. All rights reserved.
         </p>
       </div>
