@@ -15,6 +15,11 @@ import { useConversionHistory } from '../hooks/useConversionHistory';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePageTracking, useConversionTracking, useUserBehaviorTracking } from '../hooks/useAnalytics';
 import type {ConversionRequest, ConversionHistoryItem} from '../types';
+import toast from 'react-hot-toast';
+
+// SQL 길이 제한 상수
+const SQL_WARNING_LENGTH = 50000;  // 50,000자 이상 경고
+const SQL_MAX_LENGTH = 500000;     // 500,000자 하드 리밋
 
 export const SqlConverter: React.FC = () => {
   const {
@@ -77,6 +82,20 @@ export const SqlConverter: React.FC = () => {
   const handleConvert = () => {
     if (!inputSql.trim()) {
       return;
+    }
+
+    // SQL 길이 검증
+    if (inputSql.length > SQL_MAX_LENGTH) {
+      toast.error(`SQL이 너무 깁니다. 최대 ${SQL_MAX_LENGTH.toLocaleString()}자까지 허용됩니다.`);
+      return;
+    }
+
+    // 긴 SQL 경고 (차단하지 않음)
+    if (inputSql.length > SQL_WARNING_LENGTH) {
+      toast('쿼리가 깁니다. 변환 시간이 오래 걸릴 수 있습니다.', {
+        icon: '⚠️',
+        duration: 3000
+      });
     }
 
     const request: ConversionRequest = {

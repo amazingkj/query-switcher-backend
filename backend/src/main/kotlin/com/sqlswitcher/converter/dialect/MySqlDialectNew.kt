@@ -11,6 +11,9 @@ import com.sqlswitcher.converter.feature.SelectConversionService
 import com.sqlswitcher.converter.feature.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
 import com.sqlswitcher.converter.feature.PartitionConversionService
+import com.sqlswitcher.converter.feature.ViewConversionService
+import com.sqlswitcher.converter.feature.MergeConversionService
+import com.sqlswitcher.converter.feature.ProcedureConversionService
 import org.springframework.stereotype.Component
 
 /**
@@ -27,9 +30,12 @@ class MySqlDialectNew(
     selectService: SelectConversionService,
     triggerService: TriggerConversionService,
     sequenceService: SequenceConversionService,
-    partitionService: PartitionConversionService
+    partitionService: PartitionConversionService,
+    viewService: ViewConversionService,
+    mergeService: MergeConversionService,
+    procedureService: ProcedureConversionService
 ) : BaseDialect(
-    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService, partitionService
+    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService, partitionService, viewService, mergeService, procedureService
 ) {
     override fun getDialectType() = DialectType.MYSQL
     override fun getQuoteCharacter() = "`"

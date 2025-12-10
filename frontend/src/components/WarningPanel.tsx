@@ -88,9 +88,11 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
           <option value="all">모든 타입</option>
           <option value={WarningType.SYNTAX_DIFFERENCE}>문법 차이</option>
           <option value={WarningType.UNSUPPORTED_FUNCTION}>지원하지 않는 함수</option>
+          <option value={WarningType.UNSUPPORTED_STATEMENT}>지원하지 않는 구문</option>
           <option value={WarningType.PARTIAL_SUPPORT}>부분 지원</option>
           <option value={WarningType.MANUAL_REVIEW_NEEDED}>수동 검토 필요</option>
           <option value={WarningType.PERFORMANCE_WARNING}>성능 경고</option>
+          <option value={WarningType.DATA_TYPE_MISMATCH}>데이터타입 불일치</option>
         </select>
       </div>
 

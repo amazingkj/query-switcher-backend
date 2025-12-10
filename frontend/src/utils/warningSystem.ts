@@ -14,6 +14,12 @@ export const WARNING_MESSAGES = {
     icon: '❌',
     color: 'red'
   },
+  [WarningType.UNSUPPORTED_STATEMENT]: {
+    title: '지원하지 않는 구문',
+    description: '해당 데이터베이스에서 지원하지 않는 SQL 구문입니다.',
+    icon: '🚫',
+    color: 'red'
+  },
   [WarningType.PARTIAL_SUPPORT]: {
     title: '부분 지원',
     description: '제한적인 지원을 제공합니다.',
@@ -31,6 +37,12 @@ export const WARNING_MESSAGES = {
     description: '성능에 영향을 줄 수 있습니다.',
     icon: '🐌',
     color: 'purple'
+  },
+  [WarningType.DATA_TYPE_MISMATCH]: {
+    title: '데이터타입 불일치',
+    description: '데이터타입 변환 시 정밀도나 범위가 달라질 수 있습니다.',
+    icon: '🔄',
+    color: 'orange'
   }
 };
 
@@ -151,8 +163,14 @@ export const calculateWarningPriority = (warning: ConversionWarning): number => 
   
   // 타입별 점수
   switch (warning.type) {
+    case WarningType.UNSUPPORTED_STATEMENT:
+      priority += 35;
+      break;
     case WarningType.UNSUPPORTED_FUNCTION:
       priority += 30;
+      break;
+    case WarningType.DATA_TYPE_MISMATCH:
+      priority += 25;
       break;
     case WarningType.MANUAL_REVIEW_NEEDED:
       priority += 20;

@@ -33,6 +33,9 @@ class FunctionConversionService(
         private val DECODE_PATTERN = Regex("""DECODE\s*\(\s*([^,]+)\s*,\s*(.+)\s*\)""", RegexOption.IGNORE_CASE)
         private val NVL2_PATTERN = Regex("""NVL2\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)""", RegexOption.IGNORE_CASE)
         private val IF_PATTERN = Regex("""IF\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)""", RegexOption.IGNORE_CASE)
+        // Oracle 의사 컬럼
+        private val ROWID_PATTERN = Regex("\\bROWID\\b", RegexOption.IGNORE_CASE)
+        private val ROWNUM_PATTERN = Regex("\\bROWNUM\\b", RegexOption.IGNORE_CASE)
     }
 
     /**
@@ -76,6 +79,110 @@ class FunctionConversionService(
 
         // 특수 변환: 파라미터 없는 함수들
         result = convertParameterlessFunctions(result, sourceDialect, targetDialect, appliedRules)
+
+        // Oracle 의사 컬럼 변환 (ROWID, ROWNUM)
+        result = convertOraclePseudoColumns(result, sourceDialect, targetDialect, warnings, appliedRules)
+
+        return result
+    }
+
+    /**
+     * Oracle ROWID, ROWNUM 의사 컬럼 변환
+     */
+    private fun convertOraclePseudoColumns(
+        sql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        if (sourceDialect == DialectType.ORACLE) {
+            // ROWID 변환
+            if (ROWID_PATTERN.containsMatchIn(result)) {
+                when (targetDialect) {
+                    DialectType.POSTGRESQL -> {
+                        result = ROWID_PATTERN.replace(result, "ctid")
+                        warnings.add(ConversionWarning(
+                            type = WarningType.PARTIAL_SUPPORT,
+                            message = "Oracle ROWID가 PostgreSQL ctid로 변환되었습니다.",
+                            severity = WarningSeverity.WARNING,
+                            suggestion = "ctid는 ROWID와 다르게 VACUUM 후 변경될 수 있습니다. 가능하면 기본 키를 사용하세요."
+                        ))
+                        appliedRules.add("ROWID → ctid 변환")
+                    }
+                    DialectType.MYSQL -> {
+                        warnings.add(ConversionWarning(
+                            type = WarningType.UNSUPPORTED_FUNCTION,
+                            message = "MySQL은 ROWID를 지원하지 않습니다.",
+                            severity = WarningSeverity.ERROR,
+                            suggestion = "기본 키(PRIMARY KEY) 또는 AUTO_INCREMENT 컬럼을 사용하세요."
+                        ))
+                        appliedRules.add("ROWID 감지됨 - MySQL 미지원")
+                        // ROWID를 주석으로 표시
+                        result = ROWID_PATTERN.replace(result, "/* ROWID - MySQL 미지원 */")
+                    }
+                    else -> {}
+                }
+            }
+
+            // ROWNUM 변환
+            if (ROWNUM_PATTERN.containsMatchIn(result)) {
+                when (targetDialect) {
+                    DialectType.POSTGRESQL -> {
+                        // ROWNUM = n 또는 ROWNUM <= n 패턴 감지
+                        val rownumConditionPattern = Regex(
+                            """ROWNUM\s*(<=?|=)\s*(\d+)""",
+                            RegexOption.IGNORE_CASE
+                        )
+                        val match = rownumConditionPattern.find(result)
+                        if (match != null) {
+                            val limit = match.groupValues[2]
+                            result = rownumConditionPattern.replace(result, "")
+                            // WHERE 절이 비어있으면 제거
+                            result = result.replace(Regex("""WHERE\s+AND""", RegexOption.IGNORE_CASE), "WHERE")
+                            result = result.replace(Regex("""WHERE\s*$""", RegexOption.IGNORE_CASE), "")
+                            result = result.trimEnd() + " LIMIT $limit"
+                            appliedRules.add("ROWNUM ≤ $limit → LIMIT $limit 변환")
+                        } else {
+                            warnings.add(ConversionWarning(
+                                type = WarningType.MANUAL_REVIEW_NEEDED,
+                                message = "복잡한 ROWNUM 사용이 감지되었습니다.",
+                                severity = WarningSeverity.WARNING,
+                                suggestion = "PostgreSQL에서는 ROW_NUMBER() 윈도우 함수 또는 LIMIT을 사용하세요."
+                            ))
+                            appliedRules.add("ROWNUM 감지됨 - 수동 변환 필요")
+                        }
+                    }
+                    DialectType.MYSQL -> {
+                        // ROWNUM = n 또는 ROWNUM <= n 패턴 감지
+                        val rownumConditionPattern = Regex(
+                            """ROWNUM\s*(<=?|=)\s*(\d+)""",
+                            RegexOption.IGNORE_CASE
+                        )
+                        val match = rownumConditionPattern.find(result)
+                        if (match != null) {
+                            val limit = match.groupValues[2]
+                            result = rownumConditionPattern.replace(result, "")
+                            result = result.replace(Regex("""WHERE\s+AND""", RegexOption.IGNORE_CASE), "WHERE")
+                            result = result.replace(Regex("""WHERE\s*$""", RegexOption.IGNORE_CASE), "")
+                            result = result.trimEnd() + " LIMIT $limit"
+                            appliedRules.add("ROWNUM ≤ $limit → LIMIT $limit 변환")
+                        } else {
+                            warnings.add(ConversionWarning(
+                                type = WarningType.MANUAL_REVIEW_NEEDED,
+                                message = "복잡한 ROWNUM 사용이 감지되었습니다.",
+                                severity = WarningSeverity.WARNING,
+                                suggestion = "MySQL에서는 ROW_NUMBER() 윈도우 함수 또는 LIMIT을 사용하세요."
+                            ))
+                            appliedRules.add("ROWNUM 감지됨 - 수동 변환 필요")
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        }
 
         return result
     }

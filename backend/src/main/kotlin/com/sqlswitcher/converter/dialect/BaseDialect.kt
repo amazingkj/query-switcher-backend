@@ -13,6 +13,9 @@ import com.sqlswitcher.converter.feature.SelectConversionService
 import com.sqlswitcher.converter.feature.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
 import com.sqlswitcher.converter.feature.PartitionConversionService
+import com.sqlswitcher.converter.feature.ViewConversionService
+import com.sqlswitcher.converter.feature.MergeConversionService
+import com.sqlswitcher.converter.feature.ProcedureConversionService
 import com.sqlswitcher.parser.model.AstAnalysisResult
 import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
@@ -31,7 +34,10 @@ abstract class BaseDialect(
     protected val selectService: SelectConversionService,
     protected val triggerService: TriggerConversionService,
     protected val sequenceService: SequenceConversionService,
-    protected val partitionService: PartitionConversionService
+    protected val partitionService: PartitionConversionService,
+    protected val viewService: ViewConversionService,
+    protected val mergeService: MergeConversionService,
+    protected val procedureService: ProcedureConversionService
 ) : DatabaseDialect {
 
     // 서브클래서 구현
@@ -133,6 +139,20 @@ abstract class BaseDialect(
             upperSql.startsWith("CREATE TRIGGER") || upperSql.startsWith("CREATE OR REPLACE TRIGGER") -> {
                 triggerService.convertTrigger(sql, getDialectType(), targetDialect, warnings, appliedRules)
             }
+            // VIEW 변환
+            upperSql.startsWith("CREATE VIEW") || upperSql.startsWith("CREATE OR REPLACE VIEW") ||
+            upperSql.startsWith("CREATE FORCE VIEW") || upperSql.startsWith("CREATE OR REPLACE FORCE VIEW") -> {
+                viewService.convertCreateView(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.startsWith("CREATE MATERIALIZED VIEW") || upperSql.startsWith("CREATE OR REPLACE MATERIALIZED VIEW") -> {
+                viewService.convertMaterializedView(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.startsWith("DROP VIEW") -> {
+                viewService.convertDropView(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.startsWith("ALTER VIEW") -> {
+                viewService.convertAlterView(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
             upperSql.startsWith("DROP SEQUENCE") -> {
                 sequenceService.convertDropSequence(sql, getDialectType(), targetDialect, warnings, appliedRules)
             }
@@ -141,6 +161,23 @@ abstract class BaseDialect(
             }
             upperSql.startsWith("DROP TABLE") -> {
                 ddlService.convertDropTable(sql, getDialectType(), targetDialect, appliedRules)
+            }
+            // MERGE 및 UPSERT 변환
+            upperSql.startsWith("MERGE") -> {
+                mergeService.convertMerge(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.startsWith("REPLACE") -> {
+                mergeService.convertMerge(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.contains("ON DUPLICATE KEY") || upperSql.contains("ON CONFLICT") -> {
+                mergeService.convertMerge(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            // PROCEDURE / FUNCTION 변환
+            upperSql.startsWith("CREATE PROCEDURE") || upperSql.startsWith("CREATE OR REPLACE PROCEDURE") -> {
+                procedureService.convertProcedure(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            }
+            upperSql.startsWith("CREATE FUNCTION") || upperSql.startsWith("CREATE OR REPLACE FUNCTION") -> {
+                procedureService.convertProcedure(sql, getDialectType(), targetDialect, warnings, appliedRules)
             }
             else -> {
                 functionService.convertFunctionsInSql(sql, getDialectType(), targetDialect, warnings, appliedRules)
