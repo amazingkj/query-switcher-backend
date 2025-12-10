@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { sqlSnippets, getSnippetsByDialect, searchSnippets } from '../utils/sqlSnippets';
+import { getSnippetsByDialect, searchSnippets } from '../utils/sqlSnippets';
 import { DialectType } from '../types';
 
 interface SqlSnippetPanelProps {
@@ -56,23 +56,23 @@ export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({
         </div>
 
         {/* 검색 및 필터 */}
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex gap-4">
+        <div className="p-3 sm:p-4 border-b border-gray-200">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
             <div className="flex-1">
               <input
                 type="text"
                 placeholder="스니펫 검색..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {categories.map(category => (
                 <button
                   key={category.key}
                   onClick={() => setSelectedCategory(category.key)}
-                  className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+                  className={`px-2 py-1 sm:px-3 sm:py-2 text-xs sm:text-sm rounded-lg transition-colors ${
                     selectedCategory === category.key
                       ? 'bg-blue-500 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'

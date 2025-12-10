@@ -34,8 +34,12 @@ export const WARNING_MESSAGES = {
   }
 };
 
+// 경고 해결 방법 가이드 타입
+type SolutionsByDialect = Partial<Record<DialectType, Partial<Record<DialectType, string[]>>>>;
+type WarningSolutionEntry = SolutionsByDialect & { general?: string[] };
+
 // 경고 해결 방법 가이드
-export const WARNING_SOLUTIONS = {
+export const WARNING_SOLUTIONS: Partial<Record<WarningType, WarningSolutionEntry>> = {
   [WarningType.SYNTAX_DIFFERENCE]: {
     [DialectType.MYSQL]: {
       [DialectType.POSTGRESQL]: [

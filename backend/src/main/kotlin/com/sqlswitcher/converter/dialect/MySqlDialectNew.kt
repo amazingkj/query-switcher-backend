@@ -10,12 +10,14 @@ import com.sqlswitcher.converter.feature.DDLConversionService
 import com.sqlswitcher.converter.feature.SelectConversionService
 import com.sqlswitcher.converter.feature.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
+import com.sqlswitcher.converter.feature.PartitionConversionService
 import org.springframework.stereotype.Component
 
 /**
- * MySQL SQL 방언 - 슬림화된 버전 (약 180줄)
+ * MySQL SQL 방언 - 슬림화된 버전
  *
- * 핵심 로직은 서비스 클래스에 위임하고, MySQL 특화 기능만 구현
+ * 파티션 변환은 BaseDialect의 PartitionConversionService에서 처리
+ * MySQL 특화 기능(LIMIT, ENGINE, ON DUPLICATE KEY)만 구현
  */
 @Component("mySqlDialectNew")
 class MySqlDialectNew(
@@ -24,9 +26,10 @@ class MySqlDialectNew(
     ddlService: DDLConversionService,
     selectService: SelectConversionService,
     triggerService: TriggerConversionService,
-    sequenceService: SequenceConversionService
+    sequenceService: SequenceConversionService,
+    partitionService: PartitionConversionService
 ) : BaseDialect(
-    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService
+    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService, partitionService
 ) {
     override fun getDialectType() = DialectType.MYSQL
     override fun getQuoteCharacter() = "`"
@@ -59,7 +62,7 @@ class MySqlDialectNew(
         var result = sql
 
         when (targetDialect) {
-            DialectType.ORACLE, DialectType.TIBERO -> {
+            DialectType.ORACLE -> {
                 // LIMIT n → FETCH FIRST n ROWS ONLY
                 val limitPattern = Regex("""LIMIT\s+(\d+)(?!\s*,)""", RegexOption.IGNORE_CASE)
                 val match = limitPattern.find(result)
@@ -131,7 +134,7 @@ class MySqlDialectNew(
         }
 
         when (targetDialect) {
-            DialectType.ORACLE, DialectType.TIBERO -> {
+            DialectType.ORACLE -> {
                 warnings.add(ConversionWarning(
                     type = WarningType.SYNTAX_DIFFERENCE,
                     message = "ON DUPLICATE KEY UPDATE는 MERGE INTO로 변환해야 합니다.",

@@ -36,7 +36,7 @@ class SequenceConversionService {
             DialectType.POSTGRESQL -> {
                 result = convertToPostgreSqlSequence(sql, sourceDialect, appliedRules)
             }
-            DialectType.ORACLE, DialectType.TIBERO -> {
+            DialectType.ORACLE -> {
                 result = convertToOracleSequence(sql, sourceDialect, appliedRules)
             }
         }
@@ -74,7 +74,7 @@ class SequenceConversionService {
         var result = sql
 
         // Oracle 문법 → PostgreSQL
-        if (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) {
+        if (sourceDialect == DialectType.ORACLE) {
             result = result.replace(Regex("NOCACHE", RegexOption.IGNORE_CASE), "")
             result = result.replace(Regex("NOORDER", RegexOption.IGNORE_CASE), "")
             result = result.replace(Regex("NOCYCLE", RegexOption.IGNORE_CASE), "NO CYCLE")
@@ -142,9 +142,8 @@ class SequenceConversionService {
 
         var result = sql
 
-        // Oracle/Tibero: seq_name.NEXTVAL → PostgreSQL: nextval('seq_name')
-        if ((sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO)
-            && targetDialect == DialectType.POSTGRESQL) {
+        // Oracle: seq_name.NEXTVAL → PostgreSQL: nextval('seq_name')
+        if (sourceDialect == DialectType.ORACLE && targetDialect == DialectType.POSTGRESQL) {
             result = result.replace(
                 Regex("(\\w+)\\.NEXTVAL", RegexOption.IGNORE_CASE)
             ) { match -> "nextval('${match.groupValues[1]}')" }
@@ -157,8 +156,7 @@ class SequenceConversionService {
         }
 
         // PostgreSQL: nextval('seq_name') → Oracle: seq_name.NEXTVAL
-        if (sourceDialect == DialectType.POSTGRESQL
-            && (targetDialect == DialectType.ORACLE || targetDialect == DialectType.TIBERO)) {
+        if (sourceDialect == DialectType.POSTGRESQL && targetDialect == DialectType.ORACLE) {
             result = result.replace(
                 Regex("nextval\\s*\\(\\s*'(\\w+)'\\s*\\)", RegexOption.IGNORE_CASE)
             ) { match -> "${match.groupValues[1]}.NEXTVAL" }

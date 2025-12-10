@@ -116,7 +116,6 @@ abstract class AbstractDatabaseDialect : DatabaseDialect {
             DialectType.MYSQL -> convertToMySqlFunction(functionName)
             DialectType.POSTGRESQL -> convertToPostgreSqlFunction(functionName)
             DialectType.ORACLE -> convertToOracleFunction(functionName)
-            DialectType.TIBERO -> convertToTiberoFunction(functionName)
         }
     }
     
@@ -128,7 +127,6 @@ abstract class AbstractDatabaseDialect : DatabaseDialect {
             DialectType.MYSQL -> convertToMySqlDataType(dataType)
             DialectType.POSTGRESQL -> convertToPostgreSqlDataType(dataType)
             DialectType.ORACLE -> convertToOracleDataType(dataType)
-            DialectType.TIBERO -> convertToTiberoDataType(dataType)
         }
     }
     
@@ -138,15 +136,13 @@ abstract class AbstractDatabaseDialect : DatabaseDialect {
     protected abstract fun convertToMySqlFunction(functionName: String): String
     protected abstract fun convertToPostgreSqlFunction(functionName: String): String
     protected abstract fun convertToOracleFunction(functionName: String): String
-    protected abstract fun convertToTiberoFunction(functionName: String): String
-    
+
     /**
      * 방언별 데이터 타입 변환 (하위 클래스에서 구현)
      */
     protected abstract fun convertToMySqlDataType(dataType: String): String
     protected abstract fun convertToPostgreSqlDataType(dataType: String): String
     protected abstract fun convertToOracleDataType(dataType: String): String
-    protected abstract fun convertToTiberoDataType(dataType: String): String
     
     /**
      * 경고 생성 헬퍼 메서드

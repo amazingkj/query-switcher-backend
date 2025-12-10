@@ -115,7 +115,6 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
               <option value={DialectType.MYSQL}>MySQL</option>
               <option value={DialectType.POSTGRESQL}>PostgreSQL</option>
               <option value={DialectType.ORACLE}>Oracle</option>
-              <option value={DialectType.TIBERO}>Tibero</option>
             </select>
             <select
               value={selectedTargetDialect}
@@ -126,7 +125,6 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
               <option value={DialectType.MYSQL}>MySQL</option>
               <option value={DialectType.POSTGRESQL}>PostgreSQL</option>
               <option value={DialectType.ORACLE}>Oracle</option>
-              <option value={DialectType.TIBERO}>Tibero</option>
             </select>
           </div>
         </div>

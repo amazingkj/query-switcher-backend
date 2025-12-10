@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { analytics, type ConversionEvent, type AnalyticsEvent } from '../utils/analytics';
+import { analytics, type AnalyticsEvent } from '../utils/analytics';
 
 interface AnalyticsDashboardProps {
   isOpen: boolean;

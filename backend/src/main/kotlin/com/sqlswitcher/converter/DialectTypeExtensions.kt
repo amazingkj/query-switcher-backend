@@ -22,7 +22,6 @@ val DialectType.displayName: String
         DialectType.MYSQL -> "MySQL"
         DialectType.POSTGRESQL -> "PostgreSQL"
         DialectType.ORACLE -> "Oracle"
-        DialectType.TIBERO -> "Tibero"
     }
 
 /**
@@ -33,7 +32,6 @@ val DialectType.defaultQuoteCharacter: String
         DialectType.MYSQL -> "`"
         DialectType.POSTGRESQL -> "\""
         DialectType.ORACLE -> "\""
-        DialectType.TIBERO -> "\""
     }
 
 /**
@@ -57,14 +55,6 @@ val DialectType.supportedDataTypes: Set<String>
             "BOOLEAN", "JSON", "JSONB", "XML", "UUID", "ARRAY"
         )
         DialectType.ORACLE -> setOf(
-            "NUMBER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE",
-            "CHAR", "VARCHAR2", "NCHAR", "NVARCHAR2", "CLOB", "NCLOB",
-            "RAW", "LONG RAW", "BLOB", "BFILE",
-            "DATE", "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE",
-            "INTERVAL YEAR TO MONTH", "INTERVAL DAY TO SECOND",
-            "ROWID", "UROWID", "XMLType"
-        )
-        DialectType.TIBERO -> setOf(
             "NUMBER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE",
             "CHAR", "VARCHAR2", "NCHAR", "NVARCHAR2", "CLOB", "NCLOB",
             "RAW", "LONG RAW", "BLOB", "BFILE",
@@ -105,15 +95,6 @@ val DialectType.supportedFunctions: Set<String>
             "ABS", "ROUND", "CEIL", "FLOOR", "MOD", "POWER", "SQRT",
             "CAST", "DECODE"
         )
-        DialectType.TIBERO -> setOf(
-            "COUNT", "SUM", "AVG", "MIN", "MAX", "LISTAGG", "XMLAGG",
-            "CONCAT", "SUBSTR", "LENGTH", "UPPER", "LOWER", "TRIM",
-            "SYSDATE", "CURRENT_DATE", "CURRENT_TIMESTAMP",
-            "TO_CHAR", "TO_DATE", "TO_TIMESTAMP",
-            "NVL", "NVL2", "COALESCE", "NULLIF", "GREATEST", "LEAST",
-            "ABS", "ROUND", "CEIL", "FLOOR", "MOD", "POWER", "SQRT",
-            "CAST", "DECODE"
-        )
     }
 
 /**
@@ -124,26 +105,17 @@ val DialectType.compatibilityMatrix: Map<DialectType, CompatibilityLevel>
         DialectType.MYSQL -> mapOf(
             DialectType.MYSQL to CompatibilityLevel.PERFECT,
             DialectType.POSTGRESQL to CompatibilityLevel.HIGH,
-            DialectType.ORACLE to CompatibilityLevel.MEDIUM,
-            DialectType.TIBERO to CompatibilityLevel.MEDIUM
+            DialectType.ORACLE to CompatibilityLevel.MEDIUM
         )
         DialectType.POSTGRESQL -> mapOf(
             DialectType.MYSQL to CompatibilityLevel.HIGH,
             DialectType.POSTGRESQL to CompatibilityLevel.PERFECT,
-            DialectType.ORACLE to CompatibilityLevel.MEDIUM,
-            DialectType.TIBERO to CompatibilityLevel.MEDIUM
+            DialectType.ORACLE to CompatibilityLevel.MEDIUM
         )
         DialectType.ORACLE -> mapOf(
             DialectType.MYSQL to CompatibilityLevel.MEDIUM,
             DialectType.POSTGRESQL to CompatibilityLevel.MEDIUM,
-            DialectType.ORACLE to CompatibilityLevel.PERFECT,
-            DialectType.TIBERO to CompatibilityLevel.HIGH
-        )
-        DialectType.TIBERO -> mapOf(
-            DialectType.MYSQL to CompatibilityLevel.MEDIUM,
-            DialectType.POSTGRESQL to CompatibilityLevel.MEDIUM,
-            DialectType.ORACLE to CompatibilityLevel.HIGH,
-            DialectType.TIBERO to CompatibilityLevel.PERFECT
+            DialectType.ORACLE to CompatibilityLevel.PERFECT
         )
     }
 
@@ -179,15 +151,6 @@ fun DialectType.supportsFeature(feature: DatabaseFeature): Boolean {
             DatabaseFeature.LATERAL_JOIN -> true
         }
         DialectType.ORACLE -> when (feature) {
-            DatabaseFeature.CTE -> true
-            DatabaseFeature.WINDOW_FUNCTIONS -> true
-            DatabaseFeature.JSON_FUNCTIONS -> true
-            DatabaseFeature.ARRAY_FUNCTIONS -> false
-            DatabaseFeature.RECURSIVE_QUERIES -> true
-            DatabaseFeature.PIVOT -> true
-            DatabaseFeature.LATERAL_JOIN -> false
-        }
-        DialectType.TIBERO -> when (feature) {
             DatabaseFeature.CTE -> true
             DatabaseFeature.WINDOW_FUNCTIONS -> true
             DatabaseFeature.JSON_FUNCTIONS -> true

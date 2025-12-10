@@ -67,29 +67,25 @@ const DATABASE_FEATURES = {
       'BOOLEAN 타입',
       'JSON 함수'
     ]
-  },
-  [DialectType.TIBERO]: {
-    name: 'Tibero',
-    color: 'bg-purple-600',
-    features: [
-      'Oracle 호환',
-      'ROWNUM',
-      'TO_CHAR',
-      'NVL',
-      'SEQUENCE',
-      'PARTITION'
-    ],
-    limitations: [
-      'LIMIT/OFFSET',
-      'AUTO_INCREMENT',
-      'BOOLEAN 타입',
-      'JSON 함수'
-    ]
   }
 };
 
+// 변환 가이드 타입
+interface ConversionIssue {
+  issue: string;
+  mysql?: string;
+  postgresql?: string;
+  oracle?: string;
+  note: string;
+}
+
+interface ConversionGuide {
+  title: string;
+  commonIssues: ConversionIssue[];
+}
+
 // 변환 가이드
-const CONVERSION_GUIDES = {
+const CONVERSION_GUIDES: Record<string, ConversionGuide> = {
   [`${DialectType.MYSQL}_${DialectType.POSTGRESQL}`]: {
     title: 'MySQL → PostgreSQL 변환 가이드',
     commonIssues: [
@@ -278,28 +274,37 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
                 {conversionGuide.title}
               </h3>
               <div className="space-y-4">
-                {conversionGuide.commonIssues.map((issue, index) => (
-                  <div key={index} className="border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-medium text-gray-800 mb-3">{issue.issue}</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-                      <div>
-                        <h5 className="text-sm font-medium text-red-600 mb-2">원본 ({sourceFeatures.name})</h5>
-                        <pre className="text-xs bg-red-50 p-2 rounded border overflow-x-auto">
-                          <code>{issue.mysql}</code>
-                        </pre>
+                {conversionGuide.commonIssues.map((issue: ConversionIssue, index: number) => {
+                  const sourceCode = sourceDialect === DialectType.MYSQL ? issue.mysql
+                    : sourceDialect === DialectType.POSTGRESQL ? issue.postgresql
+                    : issue.oracle;
+                  const targetCode = targetDialect === DialectType.MYSQL ? issue.mysql
+                    : targetDialect === DialectType.POSTGRESQL ? issue.postgresql
+                    : issue.oracle;
+
+                  return (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4">
+                      <h4 className="font-medium text-gray-800 mb-3">{issue.issue}</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                        <div>
+                          <h5 className="text-sm font-medium text-red-600 mb-2">원본 ({sourceFeatures.name})</h5>
+                          <pre className="text-xs bg-red-50 p-2 rounded border overflow-x-auto">
+                            <code>{sourceCode}</code>
+                          </pre>
+                        </div>
+                        <div>
+                          <h5 className="text-sm font-medium text-green-600 mb-2">변환 ({targetFeatures.name})</h5>
+                          <pre className="text-xs bg-green-50 p-2 rounded border overflow-x-auto">
+                            <code>{targetCode}</code>
+                          </pre>
+                        </div>
                       </div>
-                      <div>
-                        <h5 className="text-sm font-medium text-green-600 mb-2">변환 ({targetFeatures.name})</h5>
-                        <pre className="text-xs bg-green-50 p-2 rounded border overflow-x-auto">
-                          <code>{issue.postgresql}</code>
-                        </pre>
+                      <div className="text-sm text-gray-600 bg-blue-50 p-2 rounded">
+                        <strong>💡 참고:</strong> {issue.note}
                       </div>
                     </div>
-                    <div className="text-sm text-gray-600 bg-blue-50 p-2 rounded">
-                      <strong>💡 참고:</strong> {issue.note}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

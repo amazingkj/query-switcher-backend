@@ -1,4 +1,4 @@
-import React from 'react';
+// React is used implicitly for JSX
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { SqlConverter } from './components/SqlConverter';

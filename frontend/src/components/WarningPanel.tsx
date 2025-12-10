@@ -146,24 +146,28 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
                     )}
                     
                     {/* 해결 방법 가이드 */}
-                    {sourceDialect && targetDialect && (
-                      <div className="mb-3 p-3 bg-white rounded border">
-                        <strong className="text-green-600">🔧 해결 방법:</strong>
-                        <ul className="mt-2 space-y-1">
-                          {WARNING_SOLUTIONS[warning.type]?.[sourceDialect]?.[targetDialect]?.map((solution: string | number | bigint | boolean | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | React.ReactPortal | Promise<string | number | bigint | boolean | React.ReactPortal | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | null | undefined> | null | undefined, idx: React.Key | null | undefined) => (
-                            <li key={idx} className="flex items-start">
-                              <span className="text-green-500 mr-2">•</span>
-                              <span>{solution}</span>
-                            </li>
-                          )) || WARNING_SOLUTIONS[warning.type]?.general?.map((solution: string | number | bigint | boolean | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | React.ReactPortal | Promise<string | number | bigint | boolean | React.ReactPortal | React.ReactElement<unknown, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | null | undefined> | null | undefined, idx: React.Key | null | undefined) => (
-                            <li key={idx} className="flex items-start">
-                              <span className="text-green-500 mr-2">•</span>
-                              <span>{solution}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    {sourceDialect && targetDialect && (() => {
+                      const solutionEntry = WARNING_SOLUTIONS[warning.type];
+                      const dialectSolutions = solutionEntry?.[sourceDialect as keyof typeof solutionEntry];
+                      const targetSolutions = dialectSolutions?.[targetDialect as keyof typeof dialectSolutions] as string[] | undefined;
+                      const solutions = targetSolutions || solutionEntry?.general;
+
+                      if (!solutions || solutions.length === 0) return null;
+
+                      return (
+                        <div className="mb-3 p-3 bg-white rounded border">
+                          <strong className="text-green-600">🔧 해결 방법:</strong>
+                          <ul className="mt-2 space-y-1">
+                            {solutions.map((solution: string, idx: number) => (
+                              <li key={idx} className="flex items-start">
+                                <span className="text-green-500 mr-2">•</span>
+                                <span>{solution}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                     
                     <div className="flex items-center gap-4 text-xs text-gray-500">
                       <span>타입: {warning.type}</span>

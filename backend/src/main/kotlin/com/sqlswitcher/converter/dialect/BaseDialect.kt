@@ -12,6 +12,7 @@ import com.sqlswitcher.converter.feature.DDLConversionService
 import com.sqlswitcher.converter.feature.SelectConversionService
 import com.sqlswitcher.converter.feature.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
+import com.sqlswitcher.converter.feature.PartitionConversionService
 import com.sqlswitcher.parser.model.AstAnalysisResult
 import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
@@ -29,7 +30,8 @@ abstract class BaseDialect(
     protected val ddlService: DDLConversionService,
     protected val selectService: SelectConversionService,
     protected val triggerService: TriggerConversionService,
-    protected val sequenceService: SequenceConversionService
+    protected val sequenceService: SequenceConversionService,
+    protected val partitionService: PartitionConversionService
 ) : DatabaseDialect {
 
     // 서브클래서 구현
@@ -114,6 +116,12 @@ abstract class BaseDialect(
         appliedRules: MutableList<String>
     ): String {
         val upperSql = sql.trim().uppercase()
+
+        // 파티션 테이블 변환 (CREATE TABLE ... PARTITION BY)
+        if (upperSql.contains("CREATE TABLE") && upperSql.contains("PARTITION BY")) {
+            val result = partitionService.convertPartitionTable(sql, getDialectType(), targetDialect, warnings, appliedRules)
+            if (result != null) return result
+        }
 
         return when {
             upperSql.startsWith("SELECT") -> {

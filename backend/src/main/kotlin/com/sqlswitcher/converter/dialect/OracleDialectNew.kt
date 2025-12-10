@@ -10,12 +10,14 @@ import com.sqlswitcher.converter.feature.DDLConversionService
 import com.sqlswitcher.converter.feature.SelectConversionService
 import com.sqlswitcher.converter.feature.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
+import com.sqlswitcher.converter.feature.PartitionConversionService
 import org.springframework.stereotype.Component
 
 /**
- * Oracle SQL 방언 - 슬림화된 버전 (약 150줄)
+ * Oracle SQL 방언 - 슬림화된 버전
  *
- * 핵심 로직은 서비스 클래스에 위임하고, Oracle 특화 기능만 구현
+ * 파티션 변환은 BaseDialect의 PartitionConversionService에서 처리
+ * Oracle 특화 기능(CONNECT BY, Hints)만 구현
  */
 @Component("oracleDialectNew")
 class OracleDialectNew(
@@ -24,9 +26,10 @@ class OracleDialectNew(
     ddlService: DDLConversionService,
     selectService: SelectConversionService,
     triggerService: TriggerConversionService,
-    sequenceService: SequenceConversionService
+    sequenceService: SequenceConversionService,
+    partitionService: PartitionConversionService
 ) : BaseDialect(
-    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService
+    functionService, dataTypeService, ddlService, selectService, triggerService, sequenceService, partitionService
 ) {
     override fun getDialectType() = DialectType.ORACLE
 

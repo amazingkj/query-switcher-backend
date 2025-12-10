@@ -14,44 +14,44 @@ export const sqlSnippets: SqlSnippet[] = [
     label: 'SELECT 기본',
     description: '기본 SELECT 쿼리',
     sql: 'SELECT * FROM table_name WHERE condition;',
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: 'INSERT 기본',
     description: '기본 INSERT 쿼리',
     sql: 'INSERT INTO table_name (column1, column2) VALUES (value1, value2);',
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: 'UPDATE 기본',
     description: '기본 UPDATE 쿼리',
     sql: 'UPDATE table_name SET column1 = value1 WHERE condition;',
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: 'DELETE 기본',
     description: '기본 DELETE 쿼리',
     sql: 'DELETE FROM table_name WHERE condition;',
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: 'JOIN 쿼리',
     description: 'INNER JOIN 예제',
-    sql: `SELECT a.*, b.* 
-FROM table_a a 
-INNER JOIN table_b b ON a.id = b.table_a_id 
+    sql: `SELECT a.*, b.*
+FROM table_a a
+INNER JOIN table_b b ON a.id = b.table_a_id
 WHERE a.status = 'active';`,
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: '서브쿼리',
     description: '서브쿼리 예제',
-    sql: `SELECT * 
-FROM table_name 
+    sql: `SELECT *
+FROM table_name
 WHERE id IN (
     SELECT id FROM other_table WHERE condition
 );`,
-    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.MYSQL, DialectType.POSTGRESQL, DialectType.ORACLE]
   },
   {
     label: 'MySQL LIMIT',
@@ -73,7 +73,7 @@ WHERE id IN (
     FROM table_name a 
     WHERE ROWNUM <= 30
 ) WHERE rn > 20;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'MySQL DATE_FORMAT',
@@ -91,7 +91,7 @@ WHERE id IN (
     label: 'Oracle TO_CHAR',
     description: 'Oracle 날짜 포맷팅',
     sql: "SELECT TO_CHAR(created_at, 'YYYY-MM-DD') as date FROM table_name;",
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'Oracle FETCH FIRST',
@@ -100,7 +100,7 @@ WHERE id IN (
 WHERE salary > 5000
 ORDER BY hire_date DESC
 FETCH FIRST 10 ROWS ONLY;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'Oracle FETCH with OFFSET',
@@ -108,7 +108,7 @@ FETCH FIRST 10 ROWS ONLY;`,
     sql: `SELECT * FROM products
 ORDER BY price DESC
 OFFSET 20 ROWS FETCH FIRST 10 ROWS ONLY;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'MySQL GROUP_CONCAT',
@@ -135,7 +135,7 @@ GROUP BY department_id;`,
        LISTAGG(employee_name, ', ') WITHIN GROUP (ORDER BY employee_name) as employees
 FROM employees
 GROUP BY department_id;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'MySQL IFNULL',
@@ -165,7 +165,7 @@ FROM employees;`,
     NVL(phone_number, 'N/A') as phone,
     NVL(email, 'no-email@company.com') as email
 FROM employees;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: 'MySQL NOW',
@@ -198,7 +198,7 @@ FROM orders;`,
     SYSDATE as current_time,
     TRUNC(SYSDATE - created_at) as days_since_order
 FROM orders;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   },
   {
     label: '복잡한 SELECT (MySQL)',
@@ -230,7 +230,7 @@ WHERE e.status = 'active'
     AND e.salary > 3000
 ORDER BY e.hire_date DESC
 FETCH FIRST 20 ROWS ONLY;`,
-    dialect: [DialectType.ORACLE, DialectType.TIBERO]
+    dialect: [DialectType.ORACLE]
   }
 ];
 

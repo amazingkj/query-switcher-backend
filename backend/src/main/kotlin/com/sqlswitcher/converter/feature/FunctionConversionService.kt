@@ -171,7 +171,7 @@ class FunctionConversionService(
     ): String {
         var result = sql
 
-        if (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) {
+        if (sourceDialect == DialectType.ORACLE) {
             when (targetDialect) {
                 DialectType.MYSQL -> {
                     if (SYSDATE_PATTERN.containsMatchIn(result)) {
@@ -199,7 +199,7 @@ class FunctionConversionService(
 
         if (sourceDialect == DialectType.MYSQL) {
             when (targetDialect) {
-                DialectType.ORACLE, DialectType.TIBERO -> {
+                DialectType.ORACLE -> {
                     if (NOW_PATTERN.containsMatchIn(result)) {
                         result = NOW_PATTERN.replace(result, "SYSDATE")
                         appliedRules.add("NOW() → SYSDATE")

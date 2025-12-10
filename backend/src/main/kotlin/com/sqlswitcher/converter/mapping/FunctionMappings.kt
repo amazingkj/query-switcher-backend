@@ -46,7 +46,6 @@ class FunctionMappingRegistry {
         registerMySqlToPostgreSqlMappings()
         registerPostgreSqlToOracleMappings()
         registerPostgreSqlToMySqlMappings()
-        registerTiberoMappings()
     }
 
     private fun registerOracleToMySqlMappings() {
@@ -181,25 +180,6 @@ class FunctionMappingRegistry {
             FunctionMappingRule(DialectType.POSTGRESQL, DialectType.MYSQL, "STRING_AGG", "GROUP_CONCAT")
         )
         rules.forEach { register(it) }
-    }
-
-    private fun registerTiberoMappings() {
-        // Tibero → MySQL (Oracle과 동일)
-        getMappingsForDialects(DialectType.ORACLE, DialectType.MYSQL).forEach { rule ->
-            register(rule.copy(sourceDialect = DialectType.TIBERO))
-        }
-        // Tibero → PostgreSQL (Oracle과 동일)
-        getMappingsForDialects(DialectType.ORACLE, DialectType.POSTGRESQL).forEach { rule ->
-            register(rule.copy(sourceDialect = DialectType.TIBERO))
-        }
-        // MySQL → Tibero (MySQL → Oracle과 동일)
-        getMappingsForDialects(DialectType.MYSQL, DialectType.ORACLE).forEach { rule ->
-            register(rule.copy(targetDialect = DialectType.TIBERO))
-        }
-        // PostgreSQL → Tibero (PostgreSQL → Oracle과 동일)
-        getMappingsForDialects(DialectType.POSTGRESQL, DialectType.ORACLE).forEach { rule ->
-            register(rule.copy(targetDialect = DialectType.TIBERO))
-        }
     }
 
     private fun register(rule: FunctionMappingRule) {

@@ -1,16 +1,5 @@
 import { useState, useEffect } from 'react';
-import {type ConversionResponse, DialectType } from '../types';
-
-interface ConversionHistoryItem {
-  id: string;
-  timestamp: Date;
-  originalSql: string;
-  convertedSql: string;
-  sourceDialect: DialectType;
-  targetDialect: DialectType;
-  warnings: any[];
-  conversionTime: number;
-}
+import {type ConversionResponse, type ConversionHistoryItem } from '../types';
 
 const HISTORY_STORAGE_KEY = 'sql_conversion_history';
 const MAX_HISTORY_ITEMS = 50;
@@ -53,7 +42,10 @@ export const useConversionHistory = () => {
       sourceDialect: result.sourceDialect,
       targetDialect: result.targetDialect,
       warnings: result.warnings,
-      conversionTime: result.conversionTime
+      appliedRules: result.appliedRules,
+      conversionTime: result.conversionTime,
+      success: result.success,
+      error: result.error
     };
 
     setHistory(prev => {

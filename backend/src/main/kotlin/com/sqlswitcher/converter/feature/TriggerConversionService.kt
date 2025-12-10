@@ -29,19 +29,16 @@ class TriggerConversionService {
         var result = sql
 
         when {
-            // Oracle/Tibero → MySQL
-            (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO)
-                && targetDialect == DialectType.MYSQL -> {
+            // Oracle → MySQL
+            sourceDialect == DialectType.ORACLE && targetDialect == DialectType.MYSQL -> {
                 result = convertOracleToMySqlTrigger(result, warnings, appliedRules)
             }
-            // Oracle/Tibero → PostgreSQL
-            (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO)
-                && targetDialect == DialectType.POSTGRESQL -> {
+            // Oracle → PostgreSQL
+            sourceDialect == DialectType.ORACLE && targetDialect == DialectType.POSTGRESQL -> {
                 result = convertOracleToPostgreSqlTrigger(result, warnings, appliedRules)
             }
-            // MySQL → Oracle/Tibero
-            sourceDialect == DialectType.MYSQL
-                && (targetDialect == DialectType.ORACLE || targetDialect == DialectType.TIBERO) -> {
+            // MySQL → Oracle
+            sourceDialect == DialectType.MYSQL && targetDialect == DialectType.ORACLE -> {
                 result = convertMySqlToOracleTrigger(result, warnings, appliedRules)
             }
             // MySQL → PostgreSQL

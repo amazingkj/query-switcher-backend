@@ -13,7 +13,7 @@ import { useSqlStore } from '../stores/sqlStore';
 import { useSqlConvert, useRealtimeConvert, useHealthCheck } from '../hooks/useSqlConvert';
 import { useConversionHistory } from '../hooks/useConversionHistory';
 import { useDebounce } from '../hooks/useDebounce';
-import { useAnalytics, usePageTracking, useConversionTracking, useUserBehaviorTracking } from '../hooks/useAnalytics';
+import { usePageTracking, useConversionTracking, useUserBehaviorTracking } from '../hooks/useAnalytics';
 import type {ConversionRequest, ConversionHistoryItem} from '../types';
 
 export const SqlConverter: React.FC = () => {

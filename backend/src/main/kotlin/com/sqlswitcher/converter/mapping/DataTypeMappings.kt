@@ -44,7 +44,6 @@ class DataTypeMappingRegistry {
         registerMySqlToPostgreSqlMappings()
         registerPostgreSqlToOracleMappings()
         registerPostgreSqlToMySqlMappings()
-        registerTiberoMappings()
     }
 
     private fun registerOracleToMySqlMappings() {
@@ -217,23 +216,6 @@ class DataTypeMappingRegistry {
             DataTypeMappingRule(DialectType.POSTGRESQL, DialectType.MYSQL, "JSONB", "JSON")
         )
         rules.forEach { register(it) }
-    }
-
-    private fun registerTiberoMappings() {
-        // Tibero ↔ MySQL (Oracle과 동일)
-        getMappingsForDialects(DialectType.ORACLE, DialectType.MYSQL).forEach { rule ->
-            register(rule.copy(sourceDialect = DialectType.TIBERO))
-        }
-        getMappingsForDialects(DialectType.MYSQL, DialectType.ORACLE).forEach { rule ->
-            register(rule.copy(targetDialect = DialectType.TIBERO))
-        }
-        // Tibero ↔ PostgreSQL (Oracle과 동일)
-        getMappingsForDialects(DialectType.ORACLE, DialectType.POSTGRESQL).forEach { rule ->
-            register(rule.copy(sourceDialect = DialectType.TIBERO))
-        }
-        getMappingsForDialects(DialectType.POSTGRESQL, DialectType.ORACLE).forEach { rule ->
-            register(rule.copy(targetDialect = DialectType.TIBERO))
-        }
     }
 
     private fun register(rule: DataTypeMappingRule) {

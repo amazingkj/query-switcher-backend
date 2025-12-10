@@ -22,8 +22,6 @@ const dialectToLanguage = (dialect: DialectType): FormatOptions['language'] => {
       return 'postgresql';
     case DialectType.ORACLE:
       return 'plsql'; // Oracle uses PL/SQL
-    case DialectType.TIBERO:
-      return 'plsql'; // Tibero uses PL/SQL like Oracle
     default:
       return 'sql';
   }

@@ -488,7 +488,15 @@ data class PartitionDefinition(
     }
 
     fun toMySqlDefinition(): String {
-        val sb = StringBuilder("    PARTITION `$name` VALUES ")
+        return toMySqlDefinitionSimple(false)
+    }
+
+    /**
+     * MySQL 파티션 정의 (단순 형식)
+     * @param skipSubpartitions 글로벌 서브파티션이 정의된 경우 true
+     */
+    fun toMySqlDefinitionSimple(skipSubpartitions: Boolean = false): String {
+        val sb = StringBuilder("PARTITION `$name` VALUES ")
 
         if (values.uppercase().contains("MAXVALUE")) {
             sb.append("LESS THAN MAXVALUE")
@@ -500,15 +508,18 @@ data class PartitionDefinition(
             sb.append("LESS THAN ($values)")
         }
 
-        // MySQL 서브파티션 (HASH/KEY만 지원)
-        if (subpartitions.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("    (")
-            sb.append(subpartitions.joinToString(",\n") { it.toMySqlDefinition() })
-            sb.appendLine()
-            sb.append("    )")
-        } else if (subpartitionCount != null && subpartitionCount > 0) {
-            sb.append(" SUBPARTITIONS $subpartitionCount")
+        // 글로벌 서브파티션 정의가 있으면 개별 파티션에서 서브파티션 정의 생략
+        if (!skipSubpartitions) {
+            // MySQL 서브파티션 (HASH/KEY만 지원)
+            if (subpartitions.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine("    (")
+                sb.append(subpartitions.joinToString(",\n") { it.toMySqlDefinition() })
+                sb.appendLine()
+                sb.append("    )")
+            } else if (subpartitionCount != null && subpartitionCount > 0) {
+                sb.append(" SUBPARTITIONS $subpartitionCount")
+            }
         }
 
         // MySQL은 TABLESPACE 미지원 (파티션 레벨)
@@ -516,30 +527,75 @@ data class PartitionDefinition(
     }
 
     fun toPostgreSqlDefinition(tableName: String, partitionType: PartitionType): String {
-        val sb = StringBuilder("CREATE TABLE \"${tableName}_$name\" PARTITION OF \"$tableName\"")
+        return toPostgreSqlDefinitionFull(tableName, partitionType, null, null, null, emptyList())
+    }
+
+    /**
+     * PostgreSQL 파티션 정의 (서브파티션 포함)
+     */
+    fun toPostgreSqlDefinitionFull(
+        tableName: String,
+        partitionType: PartitionType,
+        schemaName: String?,
+        previousValue: String?,
+        subpartitionType: PartitionType?,
+        subpartitionColumns: List<String>
+    ): String {
+        val schemaPrefix = schemaName?.let { "\"$it\"." } ?: ""
+        val sb = StringBuilder("CREATE TABLE ${schemaPrefix}\"$name\" PARTITION OF ${schemaPrefix}\"$tableName\"")
+        sb.appendLine()
 
         when (partitionType) {
             PartitionType.RANGE, PartitionType.COLUMNS -> {
                 if (values.uppercase().contains("MAXVALUE")) {
-                    sb.append(" FOR VALUES FROM (MAXVALUE) TO (MAXVALUE)")
+                    // MAXVALUE 처리
+                    val fromValue = previousValue ?: "MINVALUE"
+                    sb.append("    FOR VALUES FROM ($fromValue) TO (MAXVALUE)")
                 } else {
                     val valueMatch = Regex("LESS\\s+THAN\\s*\\(([^)]+)\\)", RegexOption.IGNORE_CASE).find(values)
-                    val actualValue = valueMatch?.groupValues?.get(1) ?: values
-                    sb.append(" FOR VALUES FROM (MINVALUE) TO ($actualValue)")
+                    val actualValue = valueMatch?.groupValues?.get(1)?.trim() ?: values.trim()
+                    val fromValue = previousValue ?: "MINVALUE"
+                    sb.append("    FOR VALUES FROM ($fromValue) TO ($actualValue)")
                 }
             }
             PartitionType.LIST -> {
                 val inMatch = Regex("IN\\s*\\(([^)]+)\\)", RegexOption.IGNORE_CASE).find(values)
                 val listValues = inMatch?.groupValues?.get(1) ?: values
-                sb.append(" FOR VALUES IN ($listValues)")
+                sb.append("    FOR VALUES IN ($listValues)")
+            }
+            PartitionType.HASH -> {
+                // HASH 파티션은 MODULUS와 REMAINDER 사용
+                sb.append("    FOR VALUES WITH (MODULUS 32, REMAINDER 0)")
             }
             else -> { }
         }
 
-        // PostgreSQL은 파티션 테이블에 TABLESPACE 지정 가능
-        tablespace?.let { sb.append(" TABLESPACE \"$it\"") }
+        // 서브파티션 추가 (Oracle SUBPARTITION BY HASH → PostgreSQL PARTITION BY HASH)
+        if (subpartitionType != null && subpartitionColumns.isNotEmpty()) {
+            sb.appendLine()
+            val subCols = subpartitionColumns.joinToString(", ") { "\"$it\"" }
+            sb.append("    PARTITION BY ${subpartitionType.name} ($subCols)")
+        }
 
+        // PostgreSQL은 파티션 테이블에 TABLESPACE 지정 가능
+        tablespace?.let {
+            sb.appendLine()
+            sb.append("    TABLESPACE \"$it\"")
+        }
+
+        sb.append(";")
         return sb.toString()
+    }
+
+    /**
+     * LESS THAN 값 추출 (다음 파티션의 FROM 값으로 사용)
+     */
+    fun extractValue(): String? {
+        if (values.uppercase().contains("MAXVALUE")) {
+            return null
+        }
+        val valueMatch = Regex("LESS\\s+THAN\\s*\\(([^)]+)\\)", RegexOption.IGNORE_CASE).find(values)
+        return valueMatch?.groupValues?.get(1)?.trim() ?: values.trim()
     }
 }
 
@@ -1662,9 +1718,32 @@ data class TablePartitionDetailInfo(
      * PostgreSQL 파티션 테이블 개별 파티션 생성문
      */
     fun toPostgreSqlPartitionTables(): List<String> {
-        return partitions.map { p ->
-            p.toPostgreSqlDefinition(tableName, partitionType)
+        return toPostgreSqlPartitionTablesFull(null)
+    }
+
+    /**
+     * PostgreSQL 파티션 테이블 개별 파티션 생성문 (스키마 포함)
+     */
+    fun toPostgreSqlPartitionTablesFull(schemaName: String?): List<String> {
+        val result = mutableListOf<String>()
+        var previousValue: String? = null
+
+        partitions.forEach { p ->
+            result.add(
+                p.toPostgreSqlDefinitionFull(
+                    tableName = tableName,
+                    partitionType = partitionType,
+                    schemaName = schemaName,
+                    previousValue = previousValue,
+                    subpartitionType = subpartitionType,
+                    subpartitionColumns = subpartitionColumns
+                )
+            )
+            // 다음 파티션의 FROM 값으로 사용하기 위해 현재 값 저장
+            previousValue = p.extractValue()
         }
+
+        return result
     }
 
     /**
@@ -1673,27 +1752,51 @@ data class TablePartitionDetailInfo(
     fun toMySqlPartitionClause(): String {
         val sb = StringBuilder()
 
+        // MySQL은 문자열 컬럼에 RANGE COLUMNS 사용 필요
         when (partitionType) {
-            PartitionType.RANGE -> {
-                sb.appendLine("PARTITION BY RANGE (${partitionColumns.joinToString(", ") { "`$it`" }})")
-            }
-            PartitionType.COLUMNS -> {
-                sb.appendLine("PARTITION BY RANGE COLUMNS (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            PartitionType.RANGE, PartitionType.COLUMNS -> {
+                // Oracle RANGE → MySQL RANGE COLUMNS (문자열 지원)
+                sb.append("PARTITION BY RANGE COLUMNS (${partitionColumns.joinToString(", ") { "`$it`" }})")
             }
             PartitionType.LIST -> {
-                sb.appendLine("PARTITION BY LIST (${partitionColumns.joinToString(", ") { "`$it`" }})")
+                sb.append("PARTITION BY LIST COLUMNS (${partitionColumns.joinToString(", ") { "`$it`" }})")
             }
             PartitionType.HASH -> {
-                sb.appendLine("PARTITION BY HASH (${partitionColumns.joinToString(", ") { "`$it`" }})")
+                sb.append("PARTITION BY HASH (${partitionColumns.joinToString(", ") { "`$it`" }})")
             }
             PartitionType.KEY -> {
-                sb.appendLine("PARTITION BY KEY (${partitionColumns.joinToString(", ") { "`$it`" }})")
+                sb.append("PARTITION BY KEY (${partitionColumns.joinToString(", ") { "`$it`" }})")
+            }
+        }
+        sb.appendLine()
+
+        // 서브파티션 정의 (MySQL은 HASH/KEY만 지원)
+        val globalSubpartitionCount = partitions.firstOrNull()?.subpartitionCount
+        if (subpartitionType != null && subpartitionColumns.isNotEmpty()) {
+            when (subpartitionType) {
+                PartitionType.HASH -> {
+                    sb.append("SUBPARTITION BY KEY (${subpartitionColumns.joinToString(", ") { "`$it`" }})")
+                }
+                PartitionType.KEY -> {
+                    sb.append("SUBPARTITION BY KEY (${subpartitionColumns.joinToString(", ") { "`$it`" }})")
+                }
+                else -> {
+                    // RANGE/LIST 서브파티션은 KEY로 변환 (MySQL 제한)
+                    sb.append("SUBPARTITION BY KEY (${subpartitionColumns.joinToString(", ") { "`$it`" }})")
+                }
+            }
+            sb.appendLine()
+
+            // 글로벌 서브파티션 개수
+            if (globalSubpartitionCount != null && globalSubpartitionCount > 0) {
+                sb.appendLine("SUBPARTITIONS $globalSubpartitionCount")
             }
         }
 
-        // 파티션 정의
+        // 파티션 정의 (서브파티션 개수 제외 - 글로벌로 지정됨)
+        val hasGlobalSubpartition = subpartitionType != null && subpartitionColumns.isNotEmpty()
         sb.appendLine("(")
-        sb.append(partitions.joinToString(",\n") { "    ${it.toMySqlDefinition()}" })
+        sb.append(partitions.joinToString(",\n") { "    ${it.toMySqlDefinitionSimple(hasGlobalSubpartition)}" })
         sb.appendLine()
         sb.append(")")
 

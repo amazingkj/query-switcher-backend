@@ -11,8 +11,7 @@ interface DatabaseSelectorProps {
 const dialectOptions = [
   { value: DialectType.MYSQL, label: 'MySQL', color: 'bg-orange-500' },
   { value: DialectType.POSTGRESQL, label: 'PostgreSQL', color: 'bg-blue-600' },
-  { value: DialectType.ORACLE, label: 'Oracle', color: 'bg-red-600' },
-  { value: DialectType.TIBERO, label: 'Tibero', color: 'bg-purple-600' }
+  { value: DialectType.ORACLE, label: 'Oracle', color: 'bg-red-600' }
 ];
 
 export const DatabaseSelector: React.FC<DatabaseSelectorProps> = ({

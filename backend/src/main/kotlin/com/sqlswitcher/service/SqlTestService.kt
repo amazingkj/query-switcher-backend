@@ -207,8 +207,8 @@ class SqlTestService {
                     password = container.password
                 )
             }
-            DialectType.ORACLE, DialectType.TIBERO -> {
-                // Oracle XE 컨테이너 (Tibero는 Oracle 호환)
+            DialectType.ORACLE -> {
+                // Oracle XE 컨테이너
                 val container = OracleContainer("gvenzl/oracle-xe:21-slim-faststart")
                     .withDatabaseName("testdb")
                     .withUsername("test")

@@ -1,6 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
-import Editor from '@monaco-editor/react';
-import { editor } from 'monaco-editor';
+import React, { useRef, useState } from 'react';
+import Editor, { type Monaco } from '@monaco-editor/react';
+import { editor, KeyMod, KeyCode } from 'monaco-editor';
 import { formatSql, validateSql, minifySql } from '../utils/sqlFormatter';
 import { DialectType } from '../types';
 
@@ -20,7 +20,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   value,
   onChange,
   readOnly = false,
-  placeholder = 'SQL 쿼리를 입력하세요...',
+  placeholder: _placeholder = 'SQL 쿼리를 입력하세요...',
   height = '400px',
   dialect = DialectType.MYSQL,
   showToolbar = false,
@@ -30,24 +30,24 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [isValid, setIsValid] = useState<boolean | null>(null);
 
-  const handleEditorDidMount = (editor: editor.IStandaloneCodeEditor) => {
-    editorRef.current = editor;
+  const handleEditorDidMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+    editorRef.current = editorInstance;
 
     // SQL 언어 설정
-    editor.getModel()?.setLanguage('sql');
+    monaco.editor.setModelLanguage(editorInstance.getModel()!, 'sql');
 
     // 포커스 설정
     if (!readOnly) {
-      editor.focus();
+      editorInstance.focus();
     }
 
     // 키보드 단축키 설정 - Format
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+    editorInstance.addCommand(KeyMod.CtrlCmd | KeyCode.KeyF, () => {
       handleFormat();
     });
 
     // 키보드 단축키 설정 - Validate (Alt+V로 변경, Ctrl+V는 붙여넣기용)
-    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.KeyV, () => {
+    editorInstance.addCommand(KeyMod.Alt | KeyCode.KeyV, () => {
       handleValidate();
     });
   };

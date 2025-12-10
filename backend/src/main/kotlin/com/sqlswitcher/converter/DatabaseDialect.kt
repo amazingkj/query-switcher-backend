@@ -62,8 +62,7 @@ interface DatabaseDialect {
 enum class DialectType {
     MYSQL,
     POSTGRESQL,
-    ORACLE,
-    TIBERO
+    ORACLE
 }
 
 /**

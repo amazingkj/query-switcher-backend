@@ -1,26 +1,31 @@
 // 데이터베이스 방언 타입
-export enum DialectType {
-  MYSQL = 'MYSQL',
-  POSTGRESQL = 'POSTGRESQL',
-  ORACLE = 'ORACLE',
-  TIBERO = 'TIBERO'
-}
+export const DialectType = {
+  MYSQL: 'MYSQL',
+  POSTGRESQL: 'POSTGRESQL',
+  ORACLE: 'ORACLE'
+} as const;
+
+export type DialectType = typeof DialectType[keyof typeof DialectType];
 
 // 경고 타입
-export enum WarningType {
-  SYNTAX_DIFFERENCE = 'SYNTAX_DIFFERENCE',
-  UNSUPPORTED_FUNCTION = 'UNSUPPORTED_FUNCTION',
-  PARTIAL_SUPPORT = 'PARTIAL_SUPPORT',
-  MANUAL_REVIEW_NEEDED = 'MANUAL_REVIEW_NEEDED',
-  PERFORMANCE_WARNING = 'PERFORMANCE_WARNING'
-}
+export const WarningType = {
+  SYNTAX_DIFFERENCE: 'SYNTAX_DIFFERENCE',
+  UNSUPPORTED_FUNCTION: 'UNSUPPORTED_FUNCTION',
+  PARTIAL_SUPPORT: 'PARTIAL_SUPPORT',
+  MANUAL_REVIEW_NEEDED: 'MANUAL_REVIEW_NEEDED',
+  PERFORMANCE_WARNING: 'PERFORMANCE_WARNING'
+} as const;
+
+export type WarningType = typeof WarningType[keyof typeof WarningType];
 
 // 경고 심각도
-export enum WarningSeverity {
-  INFO = 'INFO',
-  WARNING = 'WARNING',
-  ERROR = 'ERROR'
-}
+export const WarningSeverity = {
+  INFO: 'INFO',
+  WARNING: 'WARNING',
+  ERROR: 'ERROR'
+} as const;
+
+export type WarningSeverity = typeof WarningSeverity[keyof typeof WarningSeverity];
 
 // 경고 정보
 export interface ConversionWarning {

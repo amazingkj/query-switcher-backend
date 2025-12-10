@@ -41,7 +41,7 @@ export const useSqlConvert = () => {
 
 // 실시간 변환을 위한 훅
 export const useRealtimeConvert = () => {
-  const { inputSql, sourceDialect, targetDialect, setOutputSql, setWarnings, setLoading } = useSqlStore();
+  const { setOutputSql, setWarnings, setLoading } = useSqlStore();
   const queryClient = useQueryClient();
 
   return useMutation({

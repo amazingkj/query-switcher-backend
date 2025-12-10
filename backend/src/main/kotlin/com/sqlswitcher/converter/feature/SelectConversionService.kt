@@ -40,8 +40,8 @@ class SelectConversionService(
         // 함수 변환
         result = functionService.convertFunctionsInSql(result, sourceDialect, targetDialect, warnings, appliedRules)
 
-        // ROWNUM 변환 (Oracle/Tibero → MySQL/PostgreSQL)
-        if (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) {
+        // ROWNUM 변환 (Oracle → MySQL/PostgreSQL)
+        if (sourceDialect == DialectType.ORACLE) {
             result = convertRownum(result, targetDialect, warnings, appliedRules)
         }
 
@@ -124,7 +124,7 @@ class SelectConversionService(
     ): String {
         var result = sql
 
-        if (sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.TIBERO) {
+        if (sourceDialect == DialectType.ORACLE) {
             when (targetDialect) {
                 DialectType.POSTGRESQL -> {
                     if (FROM_DUAL_PATTERN.containsMatchIn(result)) {

@@ -107,8 +107,8 @@ class SqlValidationService {
                     warnings.add("PostgreSQL은 NVL2를 지원하지 않습니다. CASE WHEN을 사용하세요.")
                 }
             }
-            DialectType.ORACLE, DialectType.TIBERO -> {
-                // Oracle/Tibero에서 지원하지 않는 기능 체크
+            DialectType.ORACLE -> {
+                // Oracle에서 지원하지 않는 기능 체크
                 if (Regex("\\bLIMIT\\s+\\d+").containsMatchIn(upperSql)) {
                     warnings.add("Oracle은 LIMIT을 지원하지 않습니다. ROWNUM 또는 FETCH FIRST를 사용하세요.")
                 }

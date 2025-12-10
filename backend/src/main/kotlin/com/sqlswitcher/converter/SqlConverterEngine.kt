@@ -172,18 +172,7 @@ class SqlConverterEngine(
         }
 
         // 4. 실제 변환 수행
-        // CREATE TABLE 문인 경우 옵션을 포함한 변환 수행
-        val conversionResult = if (statement is CreateTable) {
-            when (sourceDialect) {
-                is MySqlDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
-                is PostgreSqlDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
-                is TiberoDialect -> sourceDialect.performConversionWithOptions(statement, targetDialectType, analysisResult, modelOptions)
-                is OracleDialect -> sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
-                else -> sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
-            }
-        } else {
-            sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
-        }
+        val conversionResult = sourceDialect.convertQuery(statement, targetDialectType, analysisResult)
 
         warnings.addAll(conversionResult.warnings)
         appliedRules.addAll(conversionResult.appliedRules)
@@ -366,7 +355,7 @@ class SqlConverterEngine(
 
         // 7. ENABLE/DISABLE 제약조건 옵션
         val constraintStatePattern = Regex("""\s+(ENABLE|DISABLE)\s+(VALIDATE|NOVALIDATE)?""", RegexOption.IGNORE_CASE)
-        if (constraintStatePattern.containsMatchIn(result) && targetDialectType != DialectType.ORACLE && targetDialectType != DialectType.TIBERO) {
+        if (constraintStatePattern.containsMatchIn(result) && targetDialectType != DialectType.ORACLE) {
             result = constraintStatePattern.replace(result, "")
             appliedRules.add("제약조건 상태 옵션 제거")
         }
@@ -397,7 +386,7 @@ class SqlConverterEngine(
     ): String {
         var result = sql
 
-        if (sourceDialectType == DialectType.ORACLE || sourceDialectType == DialectType.TIBERO) {
+        if (sourceDialectType == DialectType.ORACLE) {
             when (targetDialectType) {
                 DialectType.MYSQL -> {
                     result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
@@ -426,7 +415,7 @@ class SqlConverterEngine(
     ): String {
         var result = sql
 
-        if (sourceDialectType == DialectType.ORACLE || sourceDialectType == DialectType.TIBERO) {
+        if (sourceDialectType == DialectType.ORACLE) {
             when (targetDialectType) {
                 DialectType.MYSQL -> {
                     result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
