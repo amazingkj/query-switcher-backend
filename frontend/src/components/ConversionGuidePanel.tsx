@@ -150,15 +150,15 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
         {/* 헤더 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
             {sourceFeatures.name} → {targetFeatures.name} 변환 가이드
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -167,13 +167,13 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
         </div>
 
         {/* 탭 네비게이션 */}
-        <div className="flex border-b border-gray-200">
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
           <button
             onClick={() => setActiveTab('features')}
             className={`px-4 py-2 text-sm font-medium ${
               activeTab === 'features'
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             데이터베이스 특징
@@ -182,8 +182,8 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
             onClick={() => setActiveTab('guide')}
             className={`px-4 py-2 text-sm font-medium ${
               activeTab === 'guide'
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             변환 가이드
@@ -192,8 +192,8 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
             onClick={() => setActiveTab('tips')}
             className={`px-4 py-2 text-sm font-medium ${
               activeTab === 'tips'
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             변환 팁
@@ -206,15 +206,15 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* 소스 데이터베이스 */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
                   {sourceFeatures.name} 특징
                 </h3>
                 <div className="space-y-4">
                   <div>
-                    <h4 className="font-medium text-green-600 mb-2">✅ 지원 기능</h4>
+                    <h4 className="font-medium text-green-600 dark:text-green-400 mb-2">✅ 지원 기능</h4>
                     <ul className="space-y-1">
                       {sourceFeatures.features.map((feature, index) => (
-                        <li key={index} className="text-sm text-gray-600 flex items-center">
+                        <li key={index} className="text-sm text-gray-600 dark:text-gray-300 flex items-center">
                           <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
                           {feature}
                         </li>
@@ -222,10 +222,10 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
                     </ul>
                   </div>
                   <div>
-                    <h4 className="font-medium text-red-600 mb-2">❌ 제한사항</h4>
+                    <h4 className="font-medium text-red-600 dark:text-red-400 mb-2">❌ 제한사항</h4>
                     <ul className="space-y-1">
                       {sourceFeatures.limitations.map((limitation, index) => (
-                        <li key={index} className="text-sm text-gray-600 flex items-center">
+                        <li key={index} className="text-sm text-gray-600 dark:text-gray-300 flex items-center">
                           <span className="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
                           {limitation}
                         </li>
@@ -237,15 +237,15 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
 
               {/* 타겟 데이터베이스 */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
                   {targetFeatures.name} 특징
                 </h3>
                 <div className="space-y-4">
                   <div>
-                    <h4 className="font-medium text-green-600 mb-2">✅ 지원 기능</h4>
+                    <h4 className="font-medium text-green-600 dark:text-green-400 mb-2">✅ 지원 기능</h4>
                     <ul className="space-y-1">
                       {targetFeatures.features.map((feature, index) => (
-                        <li key={index} className="text-sm text-gray-600 flex items-center">
+                        <li key={index} className="text-sm text-gray-600 dark:text-gray-300 flex items-center">
                           <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
                           {feature}
                         </li>
@@ -253,10 +253,10 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
                     </ul>
                   </div>
                   <div>
-                    <h4 className="font-medium text-red-600 mb-2">❌ 제한사항</h4>
+                    <h4 className="font-medium text-red-600 dark:text-red-400 mb-2">❌ 제한사항</h4>
                     <ul className="space-y-1">
                       {targetFeatures.limitations.map((limitation, index) => (
-                        <li key={index} className="text-sm text-gray-600 flex items-center">
+                        <li key={index} className="text-sm text-gray-600 dark:text-gray-300 flex items-center">
                           <span className="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
                           {limitation}
                         </li>
@@ -270,7 +270,7 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
 
           {activeTab === 'guide' && conversionGuide && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">
                 {conversionGuide.title}
               </h3>
               <div className="space-y-4">
@@ -283,23 +283,23 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
                     : issue.oracle;
 
                   return (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4">
-                      <h4 className="font-medium text-gray-800 mb-3">{issue.issue}</h4>
+                    <div key={index} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                      <h4 className="font-medium text-gray-800 dark:text-gray-100 mb-3">{issue.issue}</h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                         <div>
-                          <h5 className="text-sm font-medium text-red-600 mb-2">원본 ({sourceFeatures.name})</h5>
-                          <pre className="text-xs bg-red-50 p-2 rounded border overflow-x-auto">
+                          <h5 className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">원본 ({sourceFeatures.name})</h5>
+                          <pre className="text-xs bg-red-50 dark:bg-red-900/30 dark:text-red-200 p-2 rounded border dark:border-red-800 overflow-x-auto">
                             <code>{sourceCode}</code>
                           </pre>
                         </div>
                         <div>
-                          <h5 className="text-sm font-medium text-green-600 mb-2">변환 ({targetFeatures.name})</h5>
-                          <pre className="text-xs bg-green-50 p-2 rounded border overflow-x-auto">
+                          <h5 className="text-sm font-medium text-green-600 dark:text-green-400 mb-2">변환 ({targetFeatures.name})</h5>
+                          <pre className="text-xs bg-green-50 dark:bg-green-900/30 dark:text-green-200 p-2 rounded border dark:border-green-800 overflow-x-auto">
                             <code>{targetCode}</code>
                           </pre>
                         </div>
                       </div>
-                      <div className="text-sm text-gray-600 bg-blue-50 p-2 rounded">
+                      <div className="text-sm text-gray-600 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/30 p-2 rounded">
                         <strong>💡 참고:</strong> {issue.note}
                       </div>
                     </div>
@@ -311,31 +311,31 @@ export const ConversionGuidePanel: React.FC<ConversionGuidePanelProps> = ({
 
           {activeTab === 'tips' && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">변환 팁</h3>
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">변환 팁</h3>
               <div className="space-y-4">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h4 className="font-medium text-blue-800 mb-2">🔍 변환 전 체크리스트</h4>
-                  <ul className="text-sm text-blue-700 space-y-1">
+                <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <h4 className="font-medium text-blue-800 dark:text-blue-300 mb-2">🔍 변환 전 체크리스트</h4>
+                  <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
                     <li>• 데이터 타입 호환성 확인</li>
                     <li>• 함수명 및 문법 차이점 파악</li>
                     <li>• 제약조건 및 인덱스 고려</li>
                     <li>• 성능에 영향을 줄 수 있는 구문 식별</li>
                   </ul>
                 </div>
-                
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <h4 className="font-medium text-green-800 mb-2">✅ 변환 후 검증</h4>
-                  <ul className="text-sm text-green-700 space-y-1">
+
+                <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                  <h4 className="font-medium text-green-800 dark:text-green-300 mb-2">✅ 변환 후 검증</h4>
+                  <ul className="text-sm text-green-700 dark:text-green-400 space-y-1">
                     <li>• 변환된 SQL 문법 검증</li>
                     <li>• 데이터 타입 정확성 확인</li>
                     <li>• 성능 테스트 수행</li>
                     <li>• 예상 결과와 실제 결과 비교</li>
                   </ul>
                 </div>
-                
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <h4 className="font-medium text-yellow-800 mb-2">⚠️ 주의사항</h4>
-                  <ul className="text-sm text-yellow-700 space-y-1">
+
+                <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                  <h4 className="font-medium text-yellow-800 dark:text-yellow-300 mb-2">⚠️ 주의사항</h4>
+                  <ul className="text-sm text-yellow-700 dark:text-yellow-400 space-y-1">
                     <li>• 자동 변환으로 해결되지 않는 부분은 수동 검토 필요</li>
                     <li>• 데이터베이스별 최적화 기법 고려</li>
                     <li>• 트랜잭션 및 동시성 처리 방식 차이</li>

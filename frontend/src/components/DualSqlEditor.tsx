@@ -65,10 +65,10 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
       style={{ height }}
     >
       {/* 데스크톱 레이아웃 */}
-      <div className="hidden md:flex border-2 border-gray-300 rounded-lg overflow-hidden h-full">
+      <div className="hidden md:flex border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden h-full">
         {/* 왼쪽 에디터 (입력) */}
         <div
-          className="flex-shrink-0 border-r border-gray-300"
+          className="flex-shrink-0 border-r border-gray-300 dark:border-gray-600"
           style={{ width: `${leftWidth}%` }}
         >
           <SqlEditor
@@ -81,11 +81,11 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
 
         {/* 리사이즈 핸들 */}
         <div
-          className="w-1 bg-gray-300 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors"
+          className="w-1 bg-gray-300 dark:bg-gray-600 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors"
           onMouseDown={handleMouseDown}
         >
           <div className="w-full h-full flex items-center justify-center">
-            <div className="w-0.5 h-8 bg-gray-400 rounded-full"></div>
+            <div className="w-0.5 h-8 bg-gray-400 dark:bg-gray-500 rounded-full"></div>
           </div>
         </div>
 
@@ -106,9 +106,9 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
 
       {/* 모바일 레이아웃 */}
       <div className="md:hidden h-full flex flex-col gap-2">
-        <div className="flex-1 flex flex-col border-2 border-gray-300 rounded-lg overflow-hidden min-h-[180px]">
-          <div className="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex-shrink-0">
-            <h4 className="text-xs font-medium text-gray-700">원본 SQL</h4>
+        <div className="flex-1 flex flex-col border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden min-h-[180px]">
+          <div className="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+            <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">원본 SQL</h4>
           </div>
           <div className="flex-1 min-h-0">
             <SqlEditor
@@ -120,9 +120,9 @@ export const DualSqlEditor: React.FC<DualSqlEditorProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col border-2 border-gray-300 rounded-lg overflow-hidden min-h-[180px]">
-          <div className="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex-shrink-0">
-            <h4 className="text-xs font-medium text-gray-700">변환된 SQL</h4>
+        <div className="flex-1 flex flex-col border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden min-h-[180px]">
+          <div className="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+            <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">변환된 SQL</h4>
           </div>
           <div className="flex-1 min-h-0">
             <SqlEditor

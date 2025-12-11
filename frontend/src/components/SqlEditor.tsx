@@ -3,6 +3,7 @@ import Editor, { type Monaco } from '@monaco-editor/react';
 import { editor, KeyMod, KeyCode } from 'monaco-editor';
 import { formatSql, validateSql, minifySql } from '../utils/sqlFormatter';
 import { DialectType } from '../types';
+import { useTheme } from '../hooks/useTheme';
 
 interface SqlEditorProps {
   value: string;
@@ -29,6 +30,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 }) => {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [isValid, setIsValid] = useState<boolean | null>(null);
+  const { isDark } = useTheme();
 
   const handleEditorDidMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editorInstance;
@@ -151,6 +153,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           value={value}
           onChange={handleEditorChange}
           onMount={handleEditorDidMount}
+          theme={isDark ? 'vs-dark' : 'vs-light'}
           options={{
             readOnly,
             minimap: { enabled: false },
@@ -158,7 +161,6 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
             lineNumbers: 'on',
             fontSize: 12,
             fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", "Courier New", monospace',
-            theme: 'vs-light',
             automaticLayout: true,
             scrollBeyondLastLine: false,
             renderWhitespace: 'selection',

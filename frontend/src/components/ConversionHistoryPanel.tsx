@@ -70,10 +70,10 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full mx-4 max-h-[80vh] flex flex-col">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-6xl w-full mx-4 max-h-[80vh] flex flex-col">
         {/* 헤더 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
             변환 히스토리 ({filteredHistory.length}개)
           </h2>
           <div className="flex gap-2">
@@ -85,7 +85,7 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 focus:outline-none focus:bg-gray-100 transition-all duration-200"
+              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:bg-gray-100 dark:focus:bg-gray-700 transition-all duration-200"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -95,7 +95,7 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
         </div>
 
         {/* 검색 및 필터 */}
-        <div className="p-4 border-b border-gray-200">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex gap-4">
             <div className="flex-1">
               <input
@@ -103,13 +103,13 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
                 placeholder="SQL 검색..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
             <select
               value={selectedSourceDialect}
               onChange={(e) => setSelectedSourceDialect(e.target.value as DialectType | '')}
-              className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="">모든 소스</option>
               <option value={DialectType.MYSQL}>MySQL</option>
@@ -119,7 +119,7 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
             <select
               value={selectedTargetDialect}
               onChange={(e) => setSelectedTargetDialect(e.target.value as DialectType | '')}
-              className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="">모든 타겟</option>
               <option value={DialectType.MYSQL}>MySQL</option>
@@ -135,27 +135,27 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
             {filteredHistory.map((item) => (
               <div
                 key={item.id}
-                className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 hover:shadow-md transition-all"
+                className="border border-gray-200 dark:border-gray-600 rounded-lg p-4 hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-md transition-all"
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                    <span className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 rounded">
                       {item.sourceDialect}
                     </span>
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
-                    <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                    <span className="px-2 py-1 text-xs bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300 rounded">
                       {item.targetDialect}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
                       {formatTime(item.timestamp)}
                     </span>
                     <button
                       onClick={() => removeConversion(item.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 focus:outline-none focus:bg-red-50 transition-all duration-200"
+                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 focus:outline-none focus:bg-red-50 dark:focus:bg-red-900/30 transition-all duration-200"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -166,24 +166,24 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                   <div>
-                    <h4 className="text-sm font-medium text-gray-700 mb-1">원본 SQL</h4>
-                    <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto">
+                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">원본 SQL</h4>
+                    <pre className="text-xs bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded border dark:border-gray-700 overflow-x-auto">
                       <code>{truncateSql(item.originalSql)}</code>
                     </pre>
                   </div>
                   <div>
-                    <h4 className="text-sm font-medium text-gray-700 mb-1">변환된 SQL</h4>
-                    <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto">
+                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">변환된 SQL</h4>
+                    <pre className="text-xs bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded border dark:border-gray-700 overflow-x-auto">
                       <code>{truncateSql(item.convertedSql)}</code>
                     </pre>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 text-sm text-gray-500">
+                  <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
                     <span>변환 시간: {item.conversionTime}ms</span>
                     {item.warnings.length > 0 && (
-                      <span className="text-yellow-600">
+                      <span className="text-yellow-600 dark:text-yellow-400">
                         경고 {item.warnings.length}개
                       </span>
                     )}
@@ -198,9 +198,9 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
               </div>
             ))}
           </div>
-          
+
           {filteredHistory.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               {history.length === 0 ? '변환 히스토리가 없습니다.' : '검색 결과가 없습니다.'}
             </div>
           )}
