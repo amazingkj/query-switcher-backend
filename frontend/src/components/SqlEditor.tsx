@@ -109,7 +109,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   return (
     <div className="sql-editor flex flex-col h-full">
       {showToolbar && !readOnly && (
-        <div className="sql-editor-toolbar flex items-center justify-between p-2 bg-gray-100 border-b border-gray-300 flex-shrink-0">
+        <div className="sql-editor-toolbar flex items-center justify-between p-2 bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-600 flex-shrink-0">
           <div className="flex items-center gap-2">
             <button
               onClick={handleFormat}
@@ -143,12 +143,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           <div className="flex items-center gap-2">
             {isValid !== null && (
               <span className={`text-sm px-2 py-1 ${
-                isValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                isValid ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'
               }`}>
                 {isValid ? '✓ 유효' : '✗ 오류'}
               </span>
             )}
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 dark:text-gray-400">
               {value.length.toLocaleString()}자
             </span>
           </div>
