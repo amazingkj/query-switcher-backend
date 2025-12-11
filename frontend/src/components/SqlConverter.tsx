@@ -439,7 +439,7 @@ export const SqlConverter: React.FC = () => {
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:border-blue-500 transition-all duration-200"
+              className="flex items-center px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-gray-400 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:border-blue-500 transition-all duration-200"
               title="SQL 파일 업로드"
             >
               <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -450,9 +450,9 @@ export const SqlConverter: React.FC = () => {
             <button
               onClick={handleConvert}
               disabled={!inputSql.trim() || isLoading}
-              className="flex-1 sm:flex-none px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-blue-700 transition-all duration-200"
+              className="flex items-center flex-1 sm:flex-none px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-blue-700 transition-all duration-200"
             >
-              <svg className="w-3 h-3 inline mr-1 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 mr-1 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               {isLoading ? '변환중' : '변환'}
@@ -460,7 +460,7 @@ export const SqlConverter: React.FC = () => {
             <button
               onClick={handleCopyResult}
               disabled={!outputSql}
-              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-emerald-700 transition-all duration-200"
+              className="flex items-center px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-emerald-700 transition-all duration-200"
               title="복사"
             >
               <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -471,7 +471,7 @@ export const SqlConverter: React.FC = () => {
             <button
               onClick={handleDownload}
               disabled={!outputSql}
-              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-violet-700 transition-all duration-200"
+              className="flex items-center px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-violet-700 transition-all duration-200"
               title="다운로드"
             >
               <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -485,7 +485,7 @@ export const SqlConverter: React.FC = () => {
                 trackFeatureUse('sql_validation');
               }}
               disabled={!outputSql}
-              className="px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-teal-700 transition-all duration-200"
+              className="flex items-center px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:bg-teal-700 transition-all duration-200"
               title="검증"
             >
               <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

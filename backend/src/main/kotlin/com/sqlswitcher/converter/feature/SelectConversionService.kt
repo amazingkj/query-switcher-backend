@@ -37,6 +37,11 @@ class SelectConversionService(
 
         var result = selectSql
 
+        // 구식 Oracle JOIN (+) 변환 - 함수 변환보다 먼저 처리
+        if (sourceDialect == DialectType.ORACLE && result.contains("(+)")) {
+            result = functionService.convertOracleJoinSyntax(result, sourceDialect, targetDialect, warnings, appliedRules)
+        }
+
         // 함수 변환
         result = functionService.convertFunctionsInSql(result, sourceDialect, targetDialect, warnings, appliedRules)
 

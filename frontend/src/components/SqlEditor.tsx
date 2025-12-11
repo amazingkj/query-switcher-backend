@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import Editor, { type Monaco } from '@monaco-editor/react';
+import React, { useRef, useState, useEffect } from 'react';
+import Editor, { type Monaco, useMonaco } from '@monaco-editor/react';
 import { editor, KeyMod, KeyCode } from 'monaco-editor';
 import { formatSql, validateSql, minifySql } from '../utils/sqlFormatter';
 import { DialectType } from '../types';
@@ -31,6 +31,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [isValid, setIsValid] = useState<boolean | null>(null);
   const { isDark } = useTheme();
+  const monaco = useMonaco();
+
+  // 다크모드 토글 시 Monaco Editor 테마 동적 업데이트
+  useEffect(() => {
+    if (monaco) {
+      monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs-light');
+    }
+  }, [isDark, monaco]);
 
   const handleEditorDidMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editorInstance;
