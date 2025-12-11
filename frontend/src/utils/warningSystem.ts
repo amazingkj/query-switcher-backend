@@ -90,22 +90,22 @@ export const WARNING_SOLUTIONS: Partial<Record<WarningType, WarningSolutionEntry
 // 경고 심각도별 색상
 export const SEVERITY_COLORS = {
   [WarningSeverity.INFO]: {
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
-    text: 'text-blue-800',
-    icon: 'text-blue-500'
+    bg: 'bg-blue-50 dark:bg-blue-900/20',
+    border: 'border-blue-200 dark:border-blue-800',
+    text: 'text-blue-800 dark:text-blue-300',
+    icon: 'text-blue-500 dark:text-blue-400'
   },
   [WarningSeverity.WARNING]: {
-    bg: 'bg-yellow-50',
-    border: 'border-yellow-200',
-    text: 'text-yellow-800',
-    icon: 'text-yellow-500'
+    bg: 'bg-yellow-50 dark:bg-yellow-900/20',
+    border: 'border-yellow-200 dark:border-yellow-800',
+    text: 'text-yellow-800 dark:text-yellow-300',
+    icon: 'text-yellow-500 dark:text-yellow-400'
   },
   [WarningSeverity.ERROR]: {
-    bg: 'bg-red-50',
-    border: 'border-red-200',
-    text: 'text-red-800',
-    icon: 'text-red-500'
+    bg: 'bg-red-50 dark:bg-red-900/20',
+    border: 'border-red-200 dark:border-red-800',
+    text: 'text-red-800 dark:text-red-300',
+    icon: 'text-red-500 dark:text-red-400'
   }
 };
 

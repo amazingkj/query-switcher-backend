@@ -1,0 +1,141 @@
+version: '3.8'
+
+# SQL 변환 테스트용 데이터베이스 환경
+# 사용법: docker-compose -f docker-compose.test.yml up -d
+
+services:
+  # MySQL 8.0
+  mysql:
+    image: mysql:8.0
+    container_name: sql-test-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root1234
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: test1234
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db-init/mysql:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - db-test-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot1234"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL 15
+  postgresql:
+    image: postgres:15-alpine
+    container_name: sql-test-postgresql
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: test1234
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db-init/postgresql:/docker-entrypoint-initdb.d
+    networks:
+      - db-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Oracle XE 21c (Free)
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: sql-test-oracle
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: oracle1234
+      ORACLE_DATABASE: TESTDB
+      APP_USER: testuser
+      APP_USER_PASSWORD: test1234
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./db-init/oracle:/container-entrypoint-initdb.d
+    networks:
+      - db-test-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Adminer - 웹 기반 DB 관리 도구
+  adminer:
+    image: adminer:latest
+    container_name: sql-test-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+      ADMINER_DESIGN: dracula
+    depends_on:
+      - mysql
+      - postgresql
+    networks:
+      - db-test-network
+
+  # 백엔드 서버 (DB 테스트 연동)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sql-test-backend
+    ports:
+      - "8080:8080"
+    environment:
+      # DB 연결 설정 (Docker 내부 네트워크 사용)
+      SQL_TEST_MYSQL_URL: jdbc:mysql://mysql:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
+      SQL_TEST_MYSQL_USERNAME: testuser
+      SQL_TEST_MYSQL_PASSWORD: test1234
+      SQL_TEST_POSTGRESQL_URL: jdbc:postgresql://postgresql:5432/testdb
+      SQL_TEST_POSTGRESQL_USERNAME: testuser
+      SQL_TEST_POSTGRESQL_PASSWORD: test1234
+      SQL_TEST_ORACLE_URL: jdbc:oracle:thin:@oracle:1521/XEPDB1
+      SQL_TEST_ORACLE_USERNAME: testuser
+      SQL_TEST_ORACLE_PASSWORD: test1234
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+    networks:
+      - db-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 프론트엔드 서버
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sql-test-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - db-test-network
+
+networks:
+  db-test-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  postgres-data:
+  oracle-data:

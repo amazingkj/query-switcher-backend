@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sqlConverterApi } from '../services/api';
 import type {ConversionRequest, ConversionResponse} from '../types';
 import { useSqlStore } from '../stores/sqlStore';
+import { formatSql } from '../utils/sqlFormatter';
 import toast from 'react-hot-toast';
 
 // SQL 변환 mutation
 export const useSqlConvert = () => {
-  const { setConversionResult, setWarnings, setOutputSql, setLoading } = useSqlStore();
+  const { setConversionResult, setWarnings, setOutputSql, setLoading, isPrettyFormat, targetDialect } = useSqlStore();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -18,11 +19,16 @@ export const useSqlConvert = () => {
     onSuccess: (data: ConversionResponse) => {
       setConversionResult(data);
       setWarnings(data.warnings);
-      setOutputSql(data.convertedSql);
-      
+
+      // 포맷팅 설정에 따라 SQL 포맷팅 적용
+      const outputSql = isPrettyFormat
+        ? formatSql(data.convertedSql, data.targetDialect)
+        : data.convertedSql;
+      setOutputSql(outputSql);
+
       // 변환 결과를 캐시에 저장
       queryClient.setQueryData(['conversion', data.originalSql, data.sourceDialect, data.targetDialect], data);
-      
+
       if (data.success) {
         toast.success('SQL 변환 완료!', { id: 'converting' });
       } else {
@@ -41,7 +47,7 @@ export const useSqlConvert = () => {
 
 // 실시간 변환을 위한 훅
 export const useRealtimeConvert = () => {
-  const { setOutputSql, setWarnings, setLoading } = useSqlStore();
+  const { setOutputSql, setWarnings, setLoading, isPrettyFormat } = useSqlStore();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -50,9 +56,13 @@ export const useRealtimeConvert = () => {
       setLoading(true);
     },
     onSuccess: (data: ConversionResponse) => {
-      setOutputSql(data.convertedSql);
+      // 포맷팅 설정에 따라 SQL 포맷팅 적용
+      const outputSql = isPrettyFormat
+        ? formatSql(data.convertedSql, data.targetDialect)
+        : data.convertedSql;
+      setOutputSql(outputSql);
       setWarnings(data.warnings);
-      
+
       // 캐시에 저장
       queryClient.setQueryData(['conversion', data.originalSql, data.sourceDialect, data.targetDialect], data);
     },

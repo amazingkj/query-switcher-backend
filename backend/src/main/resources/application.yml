@@ -78,3 +78,19 @@ springdoc:
     display-request-duration: true
     display-operation-id: true
   show-actuator: true
+
+# SQL Test Database Configuration
+# Docker 환경에서는 환경변수로 오버라이드 (SQL_TEST_MYSQL_URL 등)
+sql-test:
+  mysql:
+    url: ${SQL_TEST_MYSQL_URL:jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul}
+    username: ${SQL_TEST_MYSQL_USERNAME:testuser}
+    password: ${SQL_TEST_MYSQL_PASSWORD:test1234}
+  postgresql:
+    url: ${SQL_TEST_POSTGRESQL_URL:jdbc:postgresql://localhost:5432/testdb}
+    username: ${SQL_TEST_POSTGRESQL_USERNAME:testuser}
+    password: ${SQL_TEST_POSTGRESQL_PASSWORD:test1234}
+  oracle:
+    url: ${SQL_TEST_ORACLE_URL:jdbc:oracle:thin:@localhost:1521/XEPDB1}
+    username: ${SQL_TEST_ORACLE_USERNAME:testuser}
+    password: ${SQL_TEST_ORACLE_PASSWORD:test1234}

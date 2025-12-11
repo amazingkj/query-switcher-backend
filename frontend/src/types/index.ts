@@ -146,3 +146,45 @@ export interface ContainerInfo {
   running: boolean;
   dialect: DialectType;
 }
+
+// SQL 실행 요청
+export interface ExecuteRequest {
+  sql: string;
+  dialect: DialectType;
+  dryRun?: boolean;
+}
+
+// SQL 실행 결과 컬럼 정보
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  displaySize: number;
+}
+
+// SQL 실행 에러
+export interface ExecutionError {
+  code?: string;
+  message: string;
+  sqlState?: string;
+  suggestion?: string;
+}
+
+// SQL 실행 결과
+export interface ExecutionResult {
+  success: boolean;
+  dialect: DialectType;
+  executionTimeMs: number;
+  data?: Record<string, unknown>[];
+  columns?: ColumnInfo[];
+  rowsAffected?: number;
+  error?: ExecutionError;
+  message?: string;
+}
+
+// DB 연결 상태
+export interface ConnectionStatus {
+  dialect: DialectType;
+  connected: boolean;
+  message: string;
+  version?: string;
+}

@@ -33,12 +33,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
   const { isDark } = useTheme();
   const monaco = useMonaco();
 
+  // 현재 테마 이름
+  const currentTheme = isDark ? 'vs-dark' : 'vs';
+
   // 다크모드 토글 시 Monaco Editor 테마 동적 업데이트
   useEffect(() => {
-    if (monaco) {
-      monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs-light');
+    if (monaco && editorRef.current) {
+      monaco.editor.setTheme(currentTheme);
     }
-  }, [isDark, monaco]);
+  }, [isDark, monaco, currentTheme]);
 
   const handleEditorDidMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editorInstance;
@@ -161,7 +164,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
           value={value}
           onChange={handleEditorChange}
           onMount={handleEditorDidMount}
-          theme={isDark ? 'vs-dark' : 'vs-light'}
+          theme={currentTheme}
           options={{
             readOnly,
             minimap: { enabled: false },

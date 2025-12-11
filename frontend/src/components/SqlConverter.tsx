@@ -10,6 +10,8 @@ import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { SqlDiffViewer } from './SqlDiffViewer';
 import { SqlValidationPanel } from './SqlValidationPanel';
 import { ThemeToggle } from './ThemeToggle';
+import { SqlExecutionPanel } from './SqlExecutionPanel';
+import { DbStatusIndicator } from './DbStatusIndicator';
 import { useSqlStore } from '../stores/sqlStore';
 import { useSqlConvert, useRealtimeConvert, useHealthCheck } from '../hooks/useSqlConvert';
 import { useConversionHistory } from '../hooks/useConversionHistory';
@@ -52,6 +54,7 @@ export const SqlConverter: React.FC = () => {
   const [isAnalyticsDashboardOpen, setIsAnalyticsDashboardOpen] = useState(false);
   const [isValidationPanelOpen, setIsValidationPanelOpen] = useState(false);
   const [showDiffView, setShowDiffView] = useState(false);
+  const [showExecutionPanel, setShowExecutionPanel] = useState(false);
 
   // 파일 업로드 ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -493,6 +496,28 @@ export const SqlConverter: React.FC = () => {
               </svg>
               <span className="hidden sm:inline">검증</span>
             </button>
+            <button
+              onClick={() => {
+                setShowExecutionPanel(!showExecutionPanel);
+                trackFeatureUse('db_test');
+              }}
+              disabled={!outputSql}
+              className={`flex items-center px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-200 ${
+                showExecutionPanel
+                  ? 'bg-cyan-700 ring-2 ring-cyan-400'
+                  : 'bg-cyan-600 hover:bg-cyan-700'
+              } disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none`}
+              title="DB 테스트"
+            >
+              <svg className="w-3 h-3 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+              </svg>
+              <span className="hidden sm:inline">DB테스트</span>
+            </button>
+          </div>
+          {/* DB 상태 인디케이터 */}
+          <div className="hidden sm:block">
+            <DbStatusIndicator compact />
           </div>
         </div>
 
@@ -516,9 +541,20 @@ export const SqlConverter: React.FC = () => {
         )}
       </div>
 
+      {/* SQL 실행 테스트 패널 */}
+      {showExecutionPanel && outputSql && (
+        <div className="mb-6">
+          <SqlExecutionPanel
+            sql={outputSql}
+            dialect={targetDialect}
+            onClose={() => setShowExecutionPanel(false)}
+          />
+        </div>
+      )}
+
       {/* 경고 패널 */}
-      <WarningPanel 
-        warnings={warnings} 
+      <WarningPanel
+        warnings={warnings}
         sourceDialect={sourceDialect}
         targetDialect={targetDialect}
       />

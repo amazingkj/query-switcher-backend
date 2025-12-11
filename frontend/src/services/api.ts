@@ -7,7 +7,11 @@ import type {
   ValidationResponse,
   TestRequest,
   TestResponse,
-  ContainerStatusResponse
+  ContainerStatusResponse,
+  ExecuteRequest,
+  ExecutionResult,
+  ConnectionStatus,
+  DialectType
 } from '../types';
 
 // API 클라이언트 설정
@@ -85,6 +89,29 @@ export const sqlValidationApi = {
   // 컨테이너 상태 확인
   getContainerStatus: async (): Promise<ContainerStatusResponse> => {
     const response = await apiClient.get<ContainerStatusResponse>('/validate/containers/status');
+    return response.data;
+  }
+};
+
+// SQL 실행 API (Docker DB 테스트용)
+export const sqlExecutionApi = {
+  // SQL 실행
+  execute: async (request: ExecuteRequest): Promise<ExecutionResult> => {
+    const response = await apiClient.post<ExecutionResult>('/execute', request, {
+      timeout: 30000 // 30초
+    });
+    return response.data;
+  },
+
+  // 특정 DB 연결 상태 확인
+  checkConnection: async (dialect: DialectType): Promise<ConnectionStatus> => {
+    const response = await apiClient.get<ConnectionStatus>(`/execute/status/${dialect}`);
+    return response.data;
+  },
+
+  // 모든 DB 연결 상태 확인
+  checkAllConnections: async (): Promise<Record<DialectType, ConnectionStatus>> => {
+    const response = await apiClient.get<Record<DialectType, ConnectionStatus>>('/execute/status');
     return response.data;
   }
 };

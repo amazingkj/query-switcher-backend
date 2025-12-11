@@ -45,35 +45,35 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
     return (
     <div className="warning-panel mt-4">
       {/* 헤더 및 통계 */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
           변환 경고 ({filteredWarnings.length}개)
         </h3>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-1.5 text-xs">
           {analysis.bySeverity[WarningSeverity.ERROR] > 0 && (
-            <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400 rounded">
-              오류 {analysis.bySeverity[WarningSeverity.ERROR]}개
+            <span className="px-1.5 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400 rounded">
+              오류 {analysis.bySeverity[WarningSeverity.ERROR]}
             </span>
           )}
           {analysis.bySeverity[WarningSeverity.WARNING] > 0 && (
-            <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 rounded">
-              경고 {analysis.bySeverity[WarningSeverity.WARNING]}개
+            <span className="px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 rounded">
+              경고 {analysis.bySeverity[WarningSeverity.WARNING]}
             </span>
           )}
           {analysis.bySeverity[WarningSeverity.INFO] > 0 && (
-            <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 rounded">
-              정보 {analysis.bySeverity[WarningSeverity.INFO]}개
+            <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 rounded">
+              정보 {analysis.bySeverity[WarningSeverity.INFO]}
             </span>
           )}
         </div>
       </div>
 
       {/* 필터 */}
-      <div className="flex gap-4 mb-4">
+      <div className="flex gap-2 mb-3">
         <select
           value={filterSeverity}
           onChange={(e) => setFilterSeverity(e.target.value as WarningSeverity | 'all')}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         >
           <option value="all">모든 심각도</option>
           <option value={WarningSeverity.ERROR}>오류</option>
@@ -83,7 +83,7 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
         <select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value as WarningType | 'all')}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         >
           <option value="all">모든 타입</option>
           <option value={WarningType.SYNTAX_DIFFERENCE}>문법 차이</option>
@@ -97,33 +97,33 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
       </div>
 
       {/* 경고 목록 */}
-      <div className="space-y-3">
+      <div className="space-y-2">
         {filteredWarnings.map((warning, index) => (
           <div
             key={index}
-            className={`border rounded-lg p-4 ${SEVERITY_COLORS[warning.severity].bg} ${SEVERITY_COLORS[warning.severity].border}`}
+            className={`border rounded-lg p-2.5 ${SEVERITY_COLORS[warning.severity].bg} ${SEVERITY_COLORS[warning.severity].border}`}
           >
             <div
               className="flex items-start cursor-pointer"
               onClick={() => toggleWarning(index)}
             >
-              <div className="flex-shrink-0 mr-3 mt-0.5">
-                <span className="text-2xl">
+              <div className="flex-shrink-0 mr-2 mt-0.5">
+                <span className="text-base">
                   {WARNING_MESSAGES[warning.type]?.icon || '⚠️'}
                 </span>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className={`font-medium ${SEVERITY_COLORS[warning.severity].text}`}>
+                  <div className="min-w-0 flex-1">
+                    <h4 className={`text-xs font-medium ${SEVERITY_COLORS[warning.severity].text}`}>
                       {WARNING_MESSAGES[warning.type]?.title || warning.type}
                     </h4>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5 truncate">
                       {warning.message}
                     </p>
                   </div>
                   <svg
-                    className={`w-5 h-5 text-gray-400 dark:text-gray-500 transition-transform ${
+                    className={`w-4 h-4 ml-2 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform ${
                       expandedWarnings.has(index) ? 'rotate-180' : ''
                     }`}
                     fill="none"
@@ -139,9 +139,10 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
                   </svg>
                 </div>
                 {expandedWarnings.has(index) && (
-                  <div className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+                  <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                    <p className="whitespace-normal mb-2">{warning.message}</p>
                     {warning.suggestion && (
-                      <div className="mb-3 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
+                      <div className="mb-2 p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
                         <strong className="text-blue-600 dark:text-blue-400">💡 제안:</strong>
                         <p className="mt-1">{warning.suggestion}</p>
                       </div>
@@ -157,12 +158,12 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
                       if (!solutions || solutions.length === 0) return null;
 
                       return (
-                        <div className="mb-3 p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
+                        <div className="mb-2 p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-600">
                           <strong className="text-green-600 dark:text-green-400">🔧 해결 방법:</strong>
-                          <ul className="mt-2 space-y-1">
+                          <ul className="mt-1 space-y-0.5">
                             {solutions.map((solution: string, idx: number) => (
                               <li key={idx} className="flex items-start">
-                                <span className="text-green-500 dark:text-green-400 mr-2">•</span>
+                                <span className="text-green-500 dark:text-green-400 mr-1.5">•</span>
                                 <span>{solution}</span>
                               </li>
                             ))}
@@ -171,7 +172,7 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
                       );
                     })()}
 
-                    <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-500">
+                    <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-500">
                       <span>타입: {warning.type}</span>
                       <span>심각도: {warning.severity}</span>
                     </div>
