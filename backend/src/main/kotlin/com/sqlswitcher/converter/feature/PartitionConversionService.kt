@@ -4,9 +4,9 @@ import com.sqlswitcher.converter.DialectType
 import com.sqlswitcher.converter.ConversionWarning
 import com.sqlswitcher.converter.WarningType
 import com.sqlswitcher.converter.WarningSeverity
-import com.sqlswitcher.converter.PartitionType
-import com.sqlswitcher.converter.PartitionDefinition
-import com.sqlswitcher.converter.TablePartitionDetailInfo
+import com.sqlswitcher.converter.model.PartitionType
+import com.sqlswitcher.converter.model.PartitionDefinition
+import com.sqlswitcher.converter.model.TablePartitionDetailInfo
 import org.springframework.stereotype.Service
 
 /**

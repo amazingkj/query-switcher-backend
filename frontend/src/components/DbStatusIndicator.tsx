@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { sqlExecutionApi } from '../services/api';
-import type { DialectType, ConnectionStatus } from '../types';
+import type { DialectType } from '../types';
 
 interface DbStatusIndicatorProps {
   compact?: boolean;

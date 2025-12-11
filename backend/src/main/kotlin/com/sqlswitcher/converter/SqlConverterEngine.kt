@@ -1,5 +1,6 @@
 package com.sqlswitcher.converter
 
+import com.sqlswitcher.converter.util.SqlRegexPatterns
 import com.sqlswitcher.parser.SqlParserService
 import com.sqlswitcher.service.SqlMetricsService
 import com.sqlswitcher.parser.model.AstAnalysisResult
@@ -284,7 +285,7 @@ class SqlConverterEngine(
         var result = sql
 
         // 1. RANGE/LIST/HASH 파티션 처리
-        if (result.contains(Regex("""PARTITION\s+BY\s+(RANGE|LIST|HASH)""", RegexOption.IGNORE_CASE))) {
+        if (result.contains(SqlRegexPatterns.PARTITION_BY)) {
             when (targetDialectType) {
                 DialectType.MYSQL -> {
                     // MySQL도 파티션 지원하지만 문법이 약간 다름
@@ -308,9 +309,8 @@ class SqlConverterEngine(
         }
 
         // 2. LOCAL/GLOBAL 인덱스 제거
-        val localIndexPattern = Regex("""\s+LOCAL\s*(\([^)]*\))?""", RegexOption.IGNORE_CASE)
-        if (localIndexPattern.containsMatchIn(result)) {
-            result = localIndexPattern.replace(result, "")
+        if (SqlRegexPatterns.LOCAL_INDEX.containsMatchIn(result)) {
+            result = SqlRegexPatterns.LOCAL_INDEX.replace(result, "")
             appliedRules.add("LOCAL 인덱스 키워드 제거")
             warnings.add(createWarning(
                 type = WarningType.SYNTAX_DIFFERENCE,
@@ -319,58 +319,51 @@ class SqlConverterEngine(
             ))
         }
 
-        val globalIndexPattern = Regex("""\s+GLOBAL\s*""", RegexOption.IGNORE_CASE)
-        if (globalIndexPattern.containsMatchIn(result)) {
-            result = globalIndexPattern.replace(result, " ")
+        if (SqlRegexPatterns.GLOBAL_INDEX.containsMatchIn(result)) {
+            result = SqlRegexPatterns.GLOBAL_INDEX.replace(result, " ")
             appliedRules.add("GLOBAL 인덱스 키워드 제거")
         }
 
         // 3. SECUREFILE/BASICFILE LOB 옵션 제거
-        val lobStoragePattern = Regex("""\s+(SECUREFILE|BASICFILE)\s+""", RegexOption.IGNORE_CASE)
-        if (lobStoragePattern.containsMatchIn(result)) {
-            result = lobStoragePattern.replace(result, " ")
+        if (SqlRegexPatterns.LOB_STORAGE.containsMatchIn(result)) {
+            result = SqlRegexPatterns.LOB_STORAGE.replace(result, " ")
             appliedRules.add("LOB 저장소 옵션(SECUREFILE/BASICFILE) 제거")
         }
 
         // 4. TABLESPACE 절 처리
-        val tablespacePattern = Regex("""\s+TABLESPACE\s+\w+""", RegexOption.IGNORE_CASE)
-        if (tablespacePattern.containsMatchIn(result) && targetDialectType == DialectType.MYSQL) {
-            result = tablespacePattern.replace(result, "")
+        if (SqlRegexPatterns.TABLESPACE.containsMatchIn(result) && targetDialectType == DialectType.MYSQL) {
+            result = SqlRegexPatterns.TABLESPACE.replace(result, "")
             appliedRules.add("TABLESPACE 절 제거 (MySQL)")
         }
 
         // 5. STORAGE 절 제거 (여러 줄에 걸친 경우 포함)
-        val storagePattern = Regex("""\s*STORAGE\s*\([\s\S]*?\)""", RegexOption.IGNORE_CASE)
-        if (storagePattern.containsMatchIn(result)) {
-            result = storagePattern.replace(result, "")
+        if (SqlRegexPatterns.STORAGE_CLAUSE.containsMatchIn(result)) {
+            result = SqlRegexPatterns.STORAGE_CLAUSE.replace(result, "")
             appliedRules.add("STORAGE 절 제거")
         }
 
         // 6. PCTFREE, PCTUSED, INITRANS 등 Oracle 물리적 옵션이 포함된 전체 라인 제거
-        val physicalOptionsLinePattern = Regex("""^\s*(PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING)(\s+\d+)?\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
-        if (physicalOptionsLinePattern.containsMatchIn(result)) {
-            result = physicalOptionsLinePattern.replace(result, "")
+        if (SqlRegexPatterns.PHYSICAL_OPTIONS_LINE.containsMatchIn(result)) {
+            result = SqlRegexPatterns.PHYSICAL_OPTIONS_LINE.replace(result, "")
             appliedRules.add("Oracle 물리적 저장 옵션 제거")
         }
 
         // 7. ENABLE/DISABLE 제약조건 옵션
-        val constraintStatePattern = Regex("""\s+(ENABLE|DISABLE)\s+(VALIDATE|NOVALIDATE)?""", RegexOption.IGNORE_CASE)
-        if (constraintStatePattern.containsMatchIn(result) && targetDialectType != DialectType.ORACLE) {
-            result = constraintStatePattern.replace(result, "")
+        if (SqlRegexPatterns.CONSTRAINT_STATE.containsMatchIn(result) && targetDialectType != DialectType.ORACLE) {
+            result = SqlRegexPatterns.CONSTRAINT_STATE.replace(result, "")
             appliedRules.add("제약조건 상태 옵션 제거")
         }
 
         // 8. COMPRESS/NOCOMPRESS 옵션이 포함된 전체 라인 제거
-        val compressLinePattern = Regex("""^\s*(COMPRESS|NOCOMPRESS)(\s+\d+)?\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
-        if (compressLinePattern.containsMatchIn(result)) {
-            result = compressLinePattern.replace(result, "")
+        if (SqlRegexPatterns.COMPRESS_LINE.containsMatchIn(result)) {
+            result = SqlRegexPatterns.COMPRESS_LINE.replace(result, "")
             appliedRules.add("압축 옵션 제거")
         }
 
         // 9. 연속된 빈 줄 정리 (2개 이상의 연속 빈 줄을 1개로)
-        result = result.replace(Regex("""\n\s*\n\s*\n"""), "\n\n")
+        result = SqlRegexPatterns.MULTIPLE_BLANK_LINES.replace(result, "\n\n")
         // 추가로 한번 더 정리
-        result = result.replace(Regex("""\n\s*\n\s*\n"""), "\n\n")
+        result = SqlRegexPatterns.MULTIPLE_BLANK_LINES.replace(result, "\n\n")
 
         return result.trim()
     }

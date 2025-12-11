@@ -14,6 +14,10 @@ import type {
   DialectType
 } from '../types';
 
+// 환경 설정
+const isDevelopment = import.meta.env.DEV;
+const enableApiLogging = isDevelopment && import.meta.env.VITE_API_LOGGING !== 'false';
+
 // API 클라이언트 설정
 const apiClient: AxiosInstance = axios.create({
   baseURL: '/api/v1',
@@ -26,11 +30,15 @@ const apiClient: AxiosInstance = axios.create({
 // 요청 인터셉터
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    if (enableApiLogging) {
+      console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    }
     return config;
   },
   (error) => {
-    console.error('Request Error:', error);
+    if (enableApiLogging) {
+      console.error('Request Error:', error);
+    }
     return Promise.reject(error);
   }
 );
@@ -38,18 +46,22 @@ apiClient.interceptors.request.use(
 // 응답 인터셉터
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
-    console.log(`API Response: ${response.status} ${response.config.url}`);
+    if (enableApiLogging) {
+      console.log(`API Response: ${response.status} ${response.config.url}`);
+    }
     return response;
   },
   (error) => {
-    console.error('Response Error:', error);
-    
-    // 에러 응답 처리
-    if (error.response) {
-      const errorData: ErrorResponse = error.response.data;
-      console.error('Error Details:', errorData);
+    // 에러는 항상 로깅 (디버깅에 중요)
+    if (enableApiLogging || isDevelopment) {
+      console.error('Response Error:', error);
+
+      if (error.response) {
+        const errorData: ErrorResponse = error.response.data;
+        console.error('Error Details:', errorData);
+      }
     }
-    
+
     return Promise.reject(error);
   }
 );

@@ -41,8 +41,7 @@ export const WarningPanel: React.FC<WarningPanelProps> = ({
     return null;
   }
 
-  // @ts-ignore
-    return (
+  return (
     <div className="warning-panel mt-4">
       {/* 헤더 및 통계 */}
       <div className="flex items-center justify-between mb-3">

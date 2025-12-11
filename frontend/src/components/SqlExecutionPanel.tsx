@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { sqlExecutionApi } from '../services/api';
-import type { DialectType, ExecutionResult, ConnectionStatus } from '../types';
+import type { DialectType, ExecutionResult } from '../types';
 import toast from 'react-hot-toast';
 
 interface SqlExecutionPanelProps {
