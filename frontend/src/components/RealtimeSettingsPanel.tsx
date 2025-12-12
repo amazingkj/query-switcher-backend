@@ -11,16 +11,12 @@ export const RealtimeSettingsPanel: React.FC<RealtimeSettingsPanelProps> = ({
   onClose
 }) => {
   const {
-    isAutoConvert,
-    setAutoConvert,
     isPrettyFormat,
     setPrettyFormat
   } = useSqlStore();
 
   const [settings, setSettings] = React.useState({
-    autoConvert: isAutoConvert,
     prettyFormat: isPrettyFormat,
-    debounceDelay: 1000,
     showWarnings: true,
     showConversionTime: true,
     enableHistory: true
@@ -31,14 +27,12 @@ export const RealtimeSettingsPanel: React.FC<RealtimeSettingsPanelProps> = ({
     if (isOpen) {
       setSettings(prev => ({
         ...prev,
-        autoConvert: isAutoConvert,
         prettyFormat: isPrettyFormat
       }));
     }
-  }, [isOpen, isAutoConvert, isPrettyFormat]);
+  }, [isOpen, isPrettyFormat]);
 
   const handleSave = () => {
-    setAutoConvert(settings.autoConvert);
     setPrettyFormat(settings.prettyFormat);
     // 다른 설정들도 저장 (로컬 스토리지 등)
     localStorage.setItem('sql_converter_settings', JSON.stringify(settings));
@@ -52,7 +46,7 @@ export const RealtimeSettingsPanel: React.FC<RealtimeSettingsPanelProps> = ({
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
         {/* 헤더 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">실시간 변환 설정</h2>
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">변환 설정</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -65,23 +59,6 @@ export const RealtimeSettingsPanel: React.FC<RealtimeSettingsPanelProps> = ({
 
         {/* 설정 내용 */}
         <div className="p-4 space-y-4">
-          {/* 자동 변환 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">자동 변환</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">SQL 입력 시 자동으로 변환합니다</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.autoConvert}
-                onChange={(e) => setSettings(prev => ({ ...prev, autoConvert: e.target.checked }))}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 dark:bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
           {/* SQL 포맷팅 */}
           <div className="flex items-center justify-between">
             <div>
@@ -97,25 +74,6 @@ export const RealtimeSettingsPanel: React.FC<RealtimeSettingsPanelProps> = ({
               />
               <div className="w-11 h-6 bg-gray-200 dark:bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
             </label>
-          </div>
-
-          {/* 디바운스 지연 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              변환 지연 시간 (ms)
-            </label>
-            <input
-              type="number"
-              min="100"
-              max="5000"
-              step="100"
-              value={settings.debounceDelay}
-              onChange={(e) => setSettings(prev => ({ ...prev, debounceDelay: parseInt(e.target.value) }))}
-              className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              입력 후 변환까지의 대기 시간입니다
-            </p>
           </div>
 
           {/* 경고 표시 */}

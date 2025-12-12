@@ -16,7 +16,6 @@ import { ConverterToolbar } from './ConverterToolbar';
 import { EditorActionBar } from './EditorActionBar';
 import { useSqlStore } from '../stores/sqlStore';
 import { useHealthCheck } from '../hooks/useSqlConvert';
-import { useDebounce } from '../hooks/useDebounce';
 import { useSqlConverterHandlers } from '../hooks/useSqlConverterHandlers';
 import { usePageTracking, useUserBehaviorTracking } from '../hooks/useAnalytics';
 
@@ -30,11 +29,9 @@ export const SqlConverter: React.FC = () => {
     error,
     clearError,
     isLoading,
-    isAutoConvert,
     setInputSql,
     setSourceDialect,
-    setTargetDialect,
-    setAutoConvert
+    setTargetDialect
   } = useSqlStore();
 
   // Analytics hooks
@@ -55,7 +52,6 @@ export const SqlConverter: React.FC = () => {
   const {
     fileInputRef,
     handleConvert,
-    handleRealtimeConvert,
     handleCopyResult,
     handleSwapDatabases,
     handleSnippetSelect,
@@ -66,7 +62,6 @@ export const SqlConverter: React.FC = () => {
   } = useSqlConverterHandlers();
 
   const { data: healthData } = useHealthCheck();
-  const debouncedInputSql = useDebounce(inputSql, 1000);
 
   // SQL 입력 추적
   useEffect(() => {
@@ -79,13 +74,6 @@ export const SqlConverter: React.FC = () => {
   useEffect(() => {
     trackDialectChange(sourceDialect, targetDialect);
   }, [sourceDialect, targetDialect, trackDialectChange]);
-
-  // 자동 변환 로직
-  useEffect(() => {
-    if (isAutoConvert && debouncedInputSql.trim() && debouncedInputSql !== inputSql) {
-      handleRealtimeConvert();
-    }
-  }, [debouncedInputSql, isAutoConvert, inputSql, handleRealtimeConvert]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors duration-300">
@@ -102,8 +90,6 @@ export const SqlConverter: React.FC = () => {
             onTargetChange={setTargetDialect}
           />
           <ConverterToolbar
-            isAutoConvert={isAutoConvert}
-            onAutoConvertChange={setAutoConvert}
             onSwapDatabases={handleSwapDatabases}
             onOpenSnippetPanel={() => setIsSnippetPanelOpen(true)}
             onOpenHistoryPanel={() => setIsHistoryPanelOpen(true)}
