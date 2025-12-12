@@ -1,0 +1,96 @@
+server:
+  port: 18080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: sql-switcher
+  
+  # CORS Configuration
+  web:
+    cors:
+      allowed-origins: "*"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "*"
+      allow-credentials: false
+  
+  # Database Configuration (H2 for development)
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+  
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# Logging Configuration
+logging:
+  level:
+    com.sqlswitcher: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+  security:
+    enabled: false
+
+# Application Info
+info:
+  app:
+    name: SQL Query Switcher
+    description: Online SQL dialect converter for MySQL, PostgreSQL, Oracle, and Tibero
+    version: 0.0.1-SNAPSHOT
+
+# OpenAPI Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+    display-request-duration: true
+    display-operation-id: true
+  show-actuator: true
+
+# SQL Test Database Configuration
+# Docker 환경에서는 환경변수로 오버라이드 (SQL_TEST_MYSQL_URL 등)
+sql-test:
+  mysql:
+    url: ${SQL_TEST_MYSQL_URL:jdbc:mysql://localhost:3306/testdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul}
+    username: ${SQL_TEST_MYSQL_USERNAME:testuser}
+    password: ${SQL_TEST_MYSQL_PASSWORD:test1234}
+  postgresql:
+    url: ${SQL_TEST_POSTGRESQL_URL:jdbc:postgresql://localhost:5432/testdb}
+    username: ${SQL_TEST_POSTGRESQL_USERNAME:testuser}
+    password: ${SQL_TEST_POSTGRESQL_PASSWORD:test1234}
+  oracle:
+    url: ${SQL_TEST_ORACLE_URL:jdbc:oracle:thin:@localhost:1521/XEPDB1}
+    username: ${SQL_TEST_ORACLE_USERNAME:testuser}
+    password: ${SQL_TEST_ORACLE_PASSWORD:test1234}

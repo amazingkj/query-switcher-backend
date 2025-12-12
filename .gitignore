@@ -6,6 +6,8 @@ out/
 ######
 .cursor
 .taskmaster
+build/
+.env
 
 ### Kotlin ###
 .kotlin
@@ -59,3 +61,9 @@ node_modules/
 # Task files
 # tasks.json
 # tasks/ 
+
+# Ignore Gradle project-specific cache directory
+.gradle
+
+# Ignore Gradle build output directory
+build

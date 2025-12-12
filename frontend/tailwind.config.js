@@ -1,0 +1,25 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  darkMode: 'class',
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      fontFamily: {
+        'sans': ['Noto Sans', 'Noto Sans KR', 'system-ui', 'sans-serif'],
+        'mono': ['Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', 'monospace'],
+      },
+      colors: {
+        primary: {
+          50: '#eff6ff',
+          500: '#3b82f6',
+          600: '#2563eb',
+          700: '#1d4ed8',
+        }
+      }
+    },
+  },
+  plugins: [],
+}

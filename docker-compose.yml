@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: sql-converter-backend:latest
+    container_name: sql-converter-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SERVER_PORT=8080
+      - JAVA_OPTS=-Xmx512m -Xms256m
+    networks:
+      - sql-converter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: sql-converter-frontend:latest
+    container_name: sql-converter-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - sql-converter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  sql-converter-network:
+    driver: bridge
+
+# Production deployment with Docker Hub
+# Replace 'yourusername' with your Docker Hub username
+#
+# To push to Docker Hub:
+# 1. docker login
+# 2. docker-compose build
+# 3. docker tag sql-converter-backend:latest yourusername/sql-converter-backend:latest
+# 4. docker tag sql-converter-frontend:latest yourusername/sql-converter-frontend:latest
+# 5. docker push yourusername/sql-converter-backend:latest
+# 6. docker push yourusername/sql-converter-frontend:latest
