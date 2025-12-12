@@ -1,6 +1,8 @@
 package com.sqlswitcher.api
 
 import com.sqlswitcher.parser.error.SqlParseException
+import com.sqlswitcher.parser.error.ConversionException
+import com.sqlswitcher.parser.error.ConversionErrorMessageBuilder
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -24,18 +26,39 @@ class GlobalExceptionHandler {
         request: WebRequest
     ): ResponseEntity<ErrorResponse> {
         logger.warn("Validation error: ${ex.message}")
-        
+
         val errors = ex.bindingResult.fieldErrors.associate { fieldError ->
             fieldError.field to (fieldError.defaultMessage ?: "Invalid value")
         }
-        
+
         val errorResponse = ErrorResponse(
             errorCode = "VALIDATION_ERROR",
             message = "Request validation failed",
             timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
             details = errors.toString()
         )
-        
+
+        return ResponseEntity.badRequest().body(errorResponse)
+    }
+
+    @ExceptionHandler(ConversionException::class)
+    fun handleConversionException(
+        ex: ConversionException,
+        request: WebRequest
+    ): ResponseEntity<ConversionErrorResponse> {
+        logger.warn("SQL conversion error: ${ex.errorCode.code} - ${ex.message}")
+
+        val errorMessage = ConversionErrorMessageBuilder.buildUserFriendlyMessage(ex)
+
+        val errorResponse = ConversionErrorResponse(
+            errorCode = errorMessage.code,
+            title = errorMessage.title,
+            message = errorMessage.description,
+            suggestions = errorMessage.suggestions,
+            timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            technicalDetails = if (logger.isDebugEnabled) errorMessage.technicalDetails else null
+        )
+
         return ResponseEntity.badRequest().body(errorResponse)
     }
 

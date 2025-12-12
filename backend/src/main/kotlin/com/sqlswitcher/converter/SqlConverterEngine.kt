@@ -360,7 +360,123 @@ class SqlConverterEngine(
             appliedRules.add("압축 옵션 제거")
         }
 
-        // 9. 연속된 빈 줄 정리 (2개 이상의 연속 빈 줄을 1개로)
+        // 9. COMMENT ON 구문 처리 (Oracle → MySQL)
+        if (targetDialectType == DialectType.MYSQL) {
+            // MySQL은 COMMENT ON 구문을 지원하지 않음 - 제거하고 경고 추가
+            val commentPattern = Regex(
+                """COMMENT\s+ON\s+(COLUMN|TABLE)\s+[^\s]+\s+IS\s+'[^']*'\s*;?""",
+                RegexOption.IGNORE_CASE
+            )
+            if (commentPattern.containsMatchIn(result)) {
+                result = commentPattern.replace(result, "")
+                appliedRules.add("COMMENT ON 구문 제거 (MySQL 미지원)")
+                warnings.add(createWarning(
+                    type = WarningType.SYNTAX_DIFFERENCE,
+                    message = "Oracle COMMENT ON 구문이 제거되었습니다. MySQL에서는 컬럼 정의 시 COMMENT 절을 사용하세요.",
+                    severity = WarningSeverity.WARNING,
+                    suggestion = "ALTER TABLE ... MODIFY COLUMN ... COMMENT '...' 형식을 사용하세요."
+                ))
+            }
+        }
+
+        // 10. 스키마.테이블명에서 스키마 제거 (선택적)
+        // "SCHEMA_NAME"."TABLE_NAME" → "TABLE_NAME"
+        val schemaTablePattern = Regex("""["']?\w+["']?\.["']?(\w+)["']?""")
+        if (schemaTablePattern.containsMatchIn(result)) {
+            result = schemaTablePattern.replace(result) { match ->
+                "\"${match.groupValues[1]}\""
+            }
+            appliedRules.add("스키마 접두사 제거")
+        }
+
+        // 11. SEGMENT CREATION 옵션 제거
+        val segmentCreationPattern = Regex(
+            """\s*SEGMENT\s+CREATION\s+(IMMEDIATE|DEFERRED)\s*""",
+            RegexOption.IGNORE_CASE
+        )
+        if (segmentCreationPattern.containsMatchIn(result)) {
+            result = segmentCreationPattern.replace(result, " ")
+            appliedRules.add("SEGMENT CREATION 옵션 제거")
+        }
+
+        // 12. LOGGING/NOLOGGING 옵션 제거
+        val loggingPattern = Regex("""\s*(NO)?LOGGING\b""", RegexOption.IGNORE_CASE)
+        if (loggingPattern.containsMatchIn(result)) {
+            result = loggingPattern.replace(result, "")
+            appliedRules.add("LOGGING/NOLOGGING 옵션 제거")
+        }
+
+        // 13. PARALLEL 옵션 제거
+        val parallelPattern = Regex(
+            """\s*(NO)?PARALLEL(\s+\d+)?\s*""",
+            RegexOption.IGNORE_CASE
+        )
+        if (parallelPattern.containsMatchIn(result)) {
+            result = parallelPattern.replace(result, " ")
+            appliedRules.add("PARALLEL 옵션 제거")
+        }
+
+        // 14. CACHE/NOCACHE 옵션 제거
+        val cachePattern = Regex("""\s*(NO)?CACHE\b""", RegexOption.IGNORE_CASE)
+        if (cachePattern.containsMatchIn(result)) {
+            result = cachePattern.replace(result, "")
+            appliedRules.add("CACHE/NOCACHE 옵션 제거")
+        }
+
+        // 15. RESULT_CACHE 힌트 제거
+        val resultCachePattern = Regex(
+            """/\*\+?\s*RESULT_CACHE[^*]*\*/""",
+            RegexOption.IGNORE_CASE
+        )
+        if (resultCachePattern.containsMatchIn(result)) {
+            result = resultCachePattern.replace(result, "")
+            appliedRules.add("RESULT_CACHE 힌트 제거")
+        }
+
+        // 16. ROWDEPENDENCIES/NOROWDEPENDENCIES 제거
+        val rowDepsPattern = Regex("""\s*(NO)?ROWDEPENDENCIES\b""", RegexOption.IGNORE_CASE)
+        if (rowDepsPattern.containsMatchIn(result)) {
+            result = rowDepsPattern.replace(result, "")
+            appliedRules.add("ROWDEPENDENCIES 옵션 제거")
+        }
+
+        // 17. MONITORING/NOMONITORING 제거
+        val monitoringPattern = Regex("""\s*(NO)?MONITORING\b""", RegexOption.IGNORE_CASE)
+        if (monitoringPattern.containsMatchIn(result)) {
+            result = monitoringPattern.replace(result, "")
+            appliedRules.add("MONITORING 옵션 제거")
+        }
+
+        // 18. DEFAULT 절의 Oracle 함수 변환
+        if (targetDialectType == DialectType.MYSQL) {
+            result = result.replace(Regex("""DEFAULT\s+SYSDATE\b""", RegexOption.IGNORE_CASE), "DEFAULT CURRENT_TIMESTAMP")
+            result = result.replace(Regex("""DEFAULT\s+SYSTIMESTAMP\b""", RegexOption.IGNORE_CASE), "DEFAULT CURRENT_TIMESTAMP")
+        } else if (targetDialectType == DialectType.POSTGRESQL) {
+            result = result.replace(Regex("""DEFAULT\s+SYSDATE\b""", RegexOption.IGNORE_CASE), "DEFAULT CURRENT_TIMESTAMP")
+            result = result.replace(Regex("""DEFAULT\s+SYSTIMESTAMP\b""", RegexOption.IGNORE_CASE), "DEFAULT CURRENT_TIMESTAMP")
+        }
+
+        // 19. FLASHBACK 관련 구문 제거
+        val flashbackPattern = Regex(
+            """\s*FLASHBACK\s+ARCHIVE[^;]*""",
+            RegexOption.IGNORE_CASE
+        )
+        if (flashbackPattern.containsMatchIn(result)) {
+            result = flashbackPattern.replace(result, "")
+            appliedRules.add("FLASHBACK ARCHIVE 옵션 제거")
+        }
+
+        // 20. ROW MOVEMENT 옵션 제거
+        val rowMovementPattern = Regex(
+            """\s*(ENABLE|DISABLE)\s+ROW\s+MOVEMENT\s*""",
+            RegexOption.IGNORE_CASE
+        )
+        if (rowMovementPattern.containsMatchIn(result)) {
+            result = rowMovementPattern.replace(result, " ")
+            appliedRules.add("ROW MOVEMENT 옵션 제거")
+        }
+
+        // 21. 연속된 빈 줄 정리 (2개 이상의 연속 빈 줄을 1개로)
         result = SqlRegexPatterns.MULTIPLE_BLANK_LINES.replace(result, "\n\n")
         // 추가로 한번 더 정리
         result = SqlRegexPatterns.MULTIPLE_BLANK_LINES.replace(result, "\n\n")
@@ -379,18 +495,98 @@ class SqlConverterEngine(
     ): String {
         var result = sql
 
-        if (sourceDialectType == DialectType.ORACLE) {
-            when (targetDialectType) {
-                DialectType.MYSQL -> {
-                    result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
-                    result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "IFNULL(")
-                    result = result.replace(Regex("\\bSUBSTR\\s*\\(", RegexOption.IGNORE_CASE), "SUBSTRING(")
+        when (sourceDialectType) {
+            DialectType.ORACLE -> {
+                when (targetDialectType) {
+                    DialectType.MYSQL -> {
+                        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
+                        result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "IFNULL(")
+                        result = result.replace(Regex("\\bSUBSTR\\s*\\(", RegexOption.IGNORE_CASE), "SUBSTRING(")
+                        result = result.replace(Regex("\\bNVL2\\s*\\(", RegexOption.IGNORE_CASE), "IF(")
+                        result = result.replace(Regex("\\bDECODE\\s*\\(", RegexOption.IGNORE_CASE), "CASE ")
+                    }
+                    DialectType.POSTGRESQL -> {
+                        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                        result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+                    }
+                    else -> {}
                 }
-                DialectType.POSTGRESQL -> {
-                    result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
-                    result = result.replace(Regex("\\bNVL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+            }
+            DialectType.MYSQL -> {
+                when (targetDialectType) {
+                    DialectType.POSTGRESQL -> {
+                        // 날짜/시간 함수
+                        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+                        result = result.replace(Regex("\\bCURDATE\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_DATE")
+                        result = result.replace(Regex("\\bCURTIME\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "CURRENT_TIME")
+                        result = result.replace(Regex("\\bUNIX_TIMESTAMP\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::INTEGER")
+                        result = result.replace(Regex("\\bFROM_UNIXTIME\\s*\\(", RegexOption.IGNORE_CASE), "TO_TIMESTAMP(")
+                        result = result.replace(Regex("\\bDATE_FORMAT\\s*\\(", RegexOption.IGNORE_CASE), "TO_CHAR(")
+                        result = result.replace(Regex("\\bSTR_TO_DATE\\s*\\(", RegexOption.IGNORE_CASE), "TO_DATE(")
+
+                        // 문자열 함수
+                        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "COALESCE(")
+                        result = result.replace(Regex("\\bIF\\s*\\(", RegexOption.IGNORE_CASE), "CASE WHEN ")
+                        result = result.replace(Regex("\\bCONCAT_WS\\s*\\(", RegexOption.IGNORE_CASE), "CONCAT_WS(")
+                        result = result.replace(Regex("\\bGROUP_CONCAT\\s*\\(", RegexOption.IGNORE_CASE), "STRING_AGG(")
+                        result = result.replace(Regex("\\bLOCATE\\s*\\(", RegexOption.IGNORE_CASE), "POSITION(")
+                        result = result.replace(Regex("\\bINSTR\\s*\\(", RegexOption.IGNORE_CASE), "POSITION(")
+
+                        // 수학 함수
+                        result = result.replace(Regex("\\bRAND\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "RANDOM()")
+                        result = result.replace(Regex("\\bTRUNCATE\\s*\\(", RegexOption.IGNORE_CASE), "TRUNC(")
+
+                        // 기타
+                        result = result.replace(Regex("\\bLAST_INSERT_ID\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "LASTVAL()")
+
+                        appliedRules.add("MySQL → PostgreSQL 함수 변환")
+                    }
+                    DialectType.ORACLE -> {
+                        result = result.replace(Regex("\\bNOW\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "SYSDATE")
+                        result = result.replace(Regex("\\bIFNULL\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+                        result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+                        result = result.replace(Regex("\\bSUBSTRING\\s*\\(", RegexOption.IGNORE_CASE), "SUBSTR(")
+                        appliedRules.add("MySQL → Oracle 함수 변환")
+                    }
+                    else -> {}
                 }
-                else -> {}
+            }
+            DialectType.POSTGRESQL -> {
+                when (targetDialectType) {
+                    DialectType.MYSQL -> {
+                        // 날짜/시간 함수
+                        result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\b", RegexOption.IGNORE_CASE), "NOW()")
+                        result = result.replace(Regex("\\bCURRENT_DATE\\b", RegexOption.IGNORE_CASE), "CURDATE()")
+                        result = result.replace(Regex("\\bCURRENT_TIME\\b", RegexOption.IGNORE_CASE), "CURTIME()")
+                        result = result.replace(Regex("\\bTO_CHAR\\s*\\(", RegexOption.IGNORE_CASE), "DATE_FORMAT(")
+                        result = result.replace(Regex("\\bTO_DATE\\s*\\(", RegexOption.IGNORE_CASE), "STR_TO_DATE(")
+                        result = result.replace(Regex("\\bTO_TIMESTAMP\\s*\\(", RegexOption.IGNORE_CASE), "FROM_UNIXTIME(")
+
+                        // 문자열 함수
+                        result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "IFNULL(")
+                        result = result.replace(Regex("\\bSTRING_AGG\\s*\\(", RegexOption.IGNORE_CASE), "GROUP_CONCAT(")
+
+                        // 수학 함수
+                        result = result.replace(Regex("\\bRANDOM\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "RAND()")
+                        result = result.replace(Regex("\\bTRUNC\\s*\\(", RegexOption.IGNORE_CASE), "TRUNCATE(")
+
+                        // 타입 캐스팅
+                        result = result.replace(Regex("::INTEGER\\b", RegexOption.IGNORE_CASE), "")
+                        result = result.replace(Regex("::TEXT\\b", RegexOption.IGNORE_CASE), "")
+                        result = result.replace(Regex("::VARCHAR\\b", RegexOption.IGNORE_CASE), "")
+                        result = result.replace(Regex("::NUMERIC\\b", RegexOption.IGNORE_CASE), "")
+                        result = result.replace(Regex("::TIMESTAMP\\b", RegexOption.IGNORE_CASE), "")
+
+                        appliedRules.add("PostgreSQL → MySQL 함수 변환")
+                    }
+                    DialectType.ORACLE -> {
+                        result = result.replace(Regex("\\bCURRENT_TIMESTAMP\\b", RegexOption.IGNORE_CASE), "SYSDATE")
+                        result = result.replace(Regex("\\bCOALESCE\\s*\\(", RegexOption.IGNORE_CASE), "NVL(")
+                        result = result.replace(Regex("\\bRANDOM\\s*\\(\\s*\\)", RegexOption.IGNORE_CASE), "DBMS_RANDOM.VALUE")
+                        appliedRules.add("PostgreSQL → Oracle 함수 변환")
+                    }
+                    else -> {}
+                }
             }
         }
 
@@ -408,39 +604,177 @@ class SqlConverterEngine(
     ): String {
         var result = sql
 
-        if (sourceDialectType == DialectType.ORACLE) {
-            when (targetDialectType) {
-                DialectType.MYSQL -> {
-                    result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
-                        val precision = m.groupValues[1].toInt()
-                        when {
-                            precision <= 3 -> "TINYINT"
-                            precision <= 5 -> "SMALLINT"
-                            precision <= 9 -> "INT"
-                            else -> "BIGINT"
-                        }
-                    }
-                    result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE), "DECIMAL($1,$2)")
-                    result = result.replace(Regex("\\bVARCHAR2\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR(")
-                    result = result.replace(Regex("\\bCLOB\\b", RegexOption.IGNORE_CASE), "LONGTEXT")
-                    result = result.replace(Regex("\\bBLOB\\b", RegexOption.IGNORE_CASE), "LONGBLOB")
-                    result = result.replace(Regex("\\bDATE\\b", RegexOption.IGNORE_CASE), "DATETIME")
+        when (sourceDialectType) {
+            DialectType.ORACLE -> {
+                // Oracle BYTE/CHAR 키워드 제거
+                if (targetDialectType != DialectType.ORACLE) {
+                    result = result.replace(Regex("\\(\\s*(\\d+)\\s+BYTE\\s*\\)", RegexOption.IGNORE_CASE), "($1)")
+                    result = result.replace(Regex("\\(\\s*(\\d+)\\s+CHAR\\s*\\)", RegexOption.IGNORE_CASE), "($1)")
+                    appliedRules.add("Oracle BYTE/CHAR 키워드 제거")
                 }
-                DialectType.POSTGRESQL -> {
-                    result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
-                        val precision = m.groupValues[1].toInt()
-                        when {
-                            precision <= 4 -> "SMALLINT"
-                            precision <= 9 -> "INTEGER"
-                            else -> "BIGINT"
+
+                when (targetDialectType) {
+                    DialectType.MYSQL -> {
+                        result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
+                            val precision = m.groupValues[1].toInt()
+                            when {
+                                precision <= 3 -> "TINYINT"
+                                precision <= 5 -> "SMALLINT"
+                                precision <= 9 -> "INT"
+                                else -> "BIGINT"
+                            }
                         }
+                        result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE), "DECIMAL($1,$2)")
+                        result = result.replace(Regex("\\bVARCHAR2\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR(")
+                        result = result.replace(Regex("\\bCLOB\\b", RegexOption.IGNORE_CASE), "LONGTEXT")
+                        result = result.replace(Regex("\\bBLOB\\b", RegexOption.IGNORE_CASE), "LONGBLOB")
+                        result = result.replace(Regex("\\bDATE\\b", RegexOption.IGNORE_CASE), "DATETIME")
+                        result = result.replace(Regex("\\bFLOAT\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
+                            val precision = m.groupValues[1].toInt()
+                            if (precision <= 24) "FLOAT" else "DOUBLE"
+                        }
+                        result = result.replace(Regex("\\bBINARY_FLOAT\\b", RegexOption.IGNORE_CASE), "FLOAT")
+                        result = result.replace(Regex("\\bBINARY_DOUBLE\\b", RegexOption.IGNORE_CASE), "DOUBLE")
+                        appliedRules.add("Oracle → MySQL 데이터타입 변환")
                     }
-                    result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE), "NUMERIC($1,$2)")
-                    result = result.replace(Regex("\\bVARCHAR2\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR(")
-                    result = result.replace(Regex("\\bCLOB\\b", RegexOption.IGNORE_CASE), "TEXT")
-                    result = result.replace(Regex("\\bBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                    DialectType.POSTGRESQL -> {
+                        result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
+                            val precision = m.groupValues[1].toInt()
+                            when {
+                                precision <= 4 -> "SMALLINT"
+                                precision <= 9 -> "INTEGER"
+                                else -> "BIGINT"
+                            }
+                        }
+                        result = result.replace(Regex("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE), "NUMERIC($1,$2)")
+                        result = result.replace(Regex("\\bVARCHAR2\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR(")
+                        result = result.replace(Regex("\\bCLOB\\b", RegexOption.IGNORE_CASE), "TEXT")
+                        result = result.replace(Regex("\\bBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bFLOAT\\s*\\(\\s*(\\d+)\\s*\\)", RegexOption.IGNORE_CASE)) { m ->
+                            val precision = m.groupValues[1].toInt()
+                            if (precision <= 24) "REAL" else "DOUBLE PRECISION"
+                        }
+                        result = result.replace(Regex("\\bBINARY_FLOAT\\b", RegexOption.IGNORE_CASE), "REAL")
+                        result = result.replace(Regex("\\bBINARY_DOUBLE\\b", RegexOption.IGNORE_CASE), "DOUBLE PRECISION")
+                        appliedRules.add("Oracle → PostgreSQL 데이터타입 변환")
+                    }
+                    else -> {}
                 }
-                else -> {}
+            }
+            DialectType.MYSQL -> {
+                when (targetDialectType) {
+                    DialectType.POSTGRESQL -> {
+                        // 정수형
+                        result = result.replace(Regex("\\bTINYINT\\s*\\(\\s*1\\s*\\)", RegexOption.IGNORE_CASE), "BOOLEAN")
+                        result = result.replace(Regex("\\bTINYINT\\b", RegexOption.IGNORE_CASE), "SMALLINT")
+                        result = result.replace(Regex("\\bMEDIUMINT\\b", RegexOption.IGNORE_CASE), "INTEGER")
+                        result = result.replace(Regex("\\bINT\\s+UNSIGNED\\b", RegexOption.IGNORE_CASE), "BIGINT")
+                        result = result.replace(Regex("\\bBIGINT\\s+UNSIGNED\\b", RegexOption.IGNORE_CASE), "NUMERIC(20)")
+
+                        // 문자열
+                        result = result.replace(Regex("\\bLONGTEXT\\b", RegexOption.IGNORE_CASE), "TEXT")
+                        result = result.replace(Regex("\\bMEDIUMTEXT\\b", RegexOption.IGNORE_CASE), "TEXT")
+                        result = result.replace(Regex("\\bTINYTEXT\\b", RegexOption.IGNORE_CASE), "TEXT")
+
+                        // 바이너리
+                        result = result.replace(Regex("\\bLONGBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bMEDIUMBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bTINYBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bBLOB\\b", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bVARBINARY\\s*\\(", RegexOption.IGNORE_CASE), "BYTEA")
+                        result = result.replace(Regex("\\bBINARY\\s*\\(", RegexOption.IGNORE_CASE), "BYTEA")
+
+                        // 날짜/시간
+                        result = result.replace(Regex("\\bDATETIME\\b", RegexOption.IGNORE_CASE), "TIMESTAMP")
+                        result = result.replace(Regex("\\bYEAR\\b", RegexOption.IGNORE_CASE), "SMALLINT")
+
+                        // 부동소수점
+                        result = result.replace(Regex("\\bDOUBLE\\b", RegexOption.IGNORE_CASE), "DOUBLE PRECISION")
+                        result = result.replace(Regex("\\bFLOAT\\b", RegexOption.IGNORE_CASE), "REAL")
+
+                        // ENUM/SET
+                        result = result.replace(Regex("\\bENUM\\s*\\([^)]+\\)", RegexOption.IGNORE_CASE), "VARCHAR(255)")
+                        result = result.replace(Regex("\\bSET\\s*\\([^)]+\\)", RegexOption.IGNORE_CASE), "VARCHAR(255)")
+
+                        // AUTO_INCREMENT → SERIAL
+                        result = result.replace(Regex("\\bINT\\s+AUTO_INCREMENT\\b", RegexOption.IGNORE_CASE), "SERIAL")
+                        result = result.replace(Regex("\\bBIGINT\\s+AUTO_INCREMENT\\b", RegexOption.IGNORE_CASE), "BIGSERIAL")
+                        result = result.replace(Regex("\\bAUTO_INCREMENT\\b", RegexOption.IGNORE_CASE), "")
+
+                        // JSON
+                        result = result.replace(Regex("\\bJSON\\b", RegexOption.IGNORE_CASE), "JSONB")
+
+                        appliedRules.add("MySQL → PostgreSQL 데이터타입 변환")
+                    }
+                    DialectType.ORACLE -> {
+                        result = result.replace(Regex("\\bVARCHAR\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR2(")
+                        result = result.replace(Regex("\\bTINYINT\\b", RegexOption.IGNORE_CASE), "NUMBER(3)")
+                        result = result.replace(Regex("\\bSMALLINT\\b", RegexOption.IGNORE_CASE), "NUMBER(5)")
+                        result = result.replace(Regex("\\bMEDIUMINT\\b", RegexOption.IGNORE_CASE), "NUMBER(7)")
+                        result = result.replace(Regex("\\bINT\\b", RegexOption.IGNORE_CASE), "NUMBER(10)")
+                        result = result.replace(Regex("\\bBIGINT\\b", RegexOption.IGNORE_CASE), "NUMBER(19)")
+                        result = result.replace(Regex("\\bDATETIME\\b", RegexOption.IGNORE_CASE), "DATE")
+                        result = result.replace(Regex("\\bLONGTEXT\\b", RegexOption.IGNORE_CASE), "CLOB")
+                        result = result.replace(Regex("\\bLONGBLOB\\b", RegexOption.IGNORE_CASE), "BLOB")
+                        result = result.replace(Regex("\\bTEXT\\b", RegexOption.IGNORE_CASE), "CLOB")
+                        appliedRules.add("MySQL → Oracle 데이터타입 변환")
+                    }
+                    else -> {}
+                }
+            }
+            DialectType.POSTGRESQL -> {
+                when (targetDialectType) {
+                    DialectType.MYSQL -> {
+                        // 정수형
+                        result = result.replace(Regex("\\bSERIAL\\b", RegexOption.IGNORE_CASE), "INT AUTO_INCREMENT")
+                        result = result.replace(Regex("\\bBIGSERIAL\\b", RegexOption.IGNORE_CASE), "BIGINT AUTO_INCREMENT")
+                        result = result.replace(Regex("\\bSMALLSERIAL\\b", RegexOption.IGNORE_CASE), "SMALLINT AUTO_INCREMENT")
+
+                        // 문자열/바이너리
+                        result = result.replace(Regex("\\bTEXT\\b", RegexOption.IGNORE_CASE), "LONGTEXT")
+                        result = result.replace(Regex("\\bBYTEA\\b", RegexOption.IGNORE_CASE), "LONGBLOB")
+
+                        // 날짜/시간
+                        result = result.replace(Regex("\\bTIMESTAMP\\s+WITHOUT\\s+TIME\\s+ZONE\\b", RegexOption.IGNORE_CASE), "DATETIME")
+                        result = result.replace(Regex("\\bTIMESTAMP\\s+WITH\\s+TIME\\s+ZONE\\b", RegexOption.IGNORE_CASE), "DATETIME")
+                        result = result.replace(Regex("\\bTIMESTAMP\\b", RegexOption.IGNORE_CASE), "DATETIME")
+                        result = result.replace(Regex("\\bINTERVAL\\b", RegexOption.IGNORE_CASE), "VARCHAR(255)")
+
+                        // 부동소수점
+                        result = result.replace(Regex("\\bDOUBLE PRECISION\\b", RegexOption.IGNORE_CASE), "DOUBLE")
+                        result = result.replace(Regex("\\bREAL\\b", RegexOption.IGNORE_CASE), "FLOAT")
+
+                        // JSON
+                        result = result.replace(Regex("\\bJSONB\\b", RegexOption.IGNORE_CASE), "JSON")
+
+                        // UUID
+                        result = result.replace(Regex("\\bUUID\\b", RegexOption.IGNORE_CASE), "CHAR(36)")
+
+                        // 배열 타입 제거
+                        result = result.replace(Regex("\\[\\]", RegexOption.IGNORE_CASE), "")
+
+                        // BOOLEAN
+                        result = result.replace(Regex("\\bBOOLEAN\\b", RegexOption.IGNORE_CASE), "TINYINT(1)")
+
+                        appliedRules.add("PostgreSQL → MySQL 데이터타입 변환")
+                    }
+                    DialectType.ORACLE -> {
+                        result = result.replace(Regex("\\bVARCHAR\\s*\\(", RegexOption.IGNORE_CASE), "VARCHAR2(")
+                        result = result.replace(Regex("\\bSERIAL\\b", RegexOption.IGNORE_CASE), "NUMBER GENERATED ALWAYS AS IDENTITY")
+                        result = result.replace(Regex("\\bBIGSERIAL\\b", RegexOption.IGNORE_CASE), "NUMBER GENERATED ALWAYS AS IDENTITY")
+                        result = result.replace(Regex("\\bINTEGER\\b", RegexOption.IGNORE_CASE), "NUMBER(10)")
+                        result = result.replace(Regex("\\bSMALLINT\\b", RegexOption.IGNORE_CASE), "NUMBER(5)")
+                        result = result.replace(Regex("\\bBIGINT\\b", RegexOption.IGNORE_CASE), "NUMBER(19)")
+                        result = result.replace(Regex("\\bTEXT\\b", RegexOption.IGNORE_CASE), "CLOB")
+                        result = result.replace(Regex("\\bBYTEA\\b", RegexOption.IGNORE_CASE), "BLOB")
+                        result = result.replace(Regex("\\bTIMESTAMP\\b", RegexOption.IGNORE_CASE), "DATE")
+                        result = result.replace(Regex("\\bBOOLEAN\\b", RegexOption.IGNORE_CASE), "NUMBER(1)")
+                        result = result.replace(Regex("\\bDOUBLE PRECISION\\b", RegexOption.IGNORE_CASE), "BINARY_DOUBLE")
+                        result = result.replace(Regex("\\bREAL\\b", RegexOption.IGNORE_CASE), "BINARY_FLOAT")
+                        appliedRules.add("PostgreSQL → Oracle 데이터타입 변환")
+                    }
+                    else -> {}
+                }
             }
         }
 

@@ -68,3 +68,15 @@ data class ErrorResponse(
     val timestamp: String,
     val details: String? = null
 )
+
+/**
+ * 변환 에러 응답 (상세 정보 포함)
+ */
+data class ConversionErrorResponse(
+    val errorCode: String,
+    val title: String,
+    val message: String,
+    val suggestions: List<String>,
+    val timestamp: String,
+    val technicalDetails: Map<String, Any?>? = null
+)

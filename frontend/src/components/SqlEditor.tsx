@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import Editor, { type Monaco, useMonaco } from '@monaco-editor/react';
 import { editor, KeyMod, KeyCode } from 'monaco-editor';
 import { formatSql, validateSql, minifySql } from '../utils/sqlFormatter';
+import { registerSqlLanguage } from '../utils/sqlLanguageConfig';
 import { DialectType } from '../types';
 import { useTheme } from '../hooks/useTheme';
 
@@ -45,6 +46,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({
 
   const handleEditorDidMount = (editorInstance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editorInstance;
+
+    // 방언별 커스텀 SQL 언어 설정 등록
+    registerSqlLanguage(monaco, dialect);
 
     // SQL 언어 설정
     monaco.editor.setModelLanguage(editorInstance.getModel()!, 'sql');

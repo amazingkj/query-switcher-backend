@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DialectType, type ConversionResponse, type ConversionWarning } from '../types';
+import type { ApiError, ConversionApiError } from '../components/ErrorDisplay';
 
 interface SqlState {
   // SQL 입력/출력
@@ -15,6 +16,9 @@ interface SqlState {
   conversionResult: ConversionResponse | null;
   warnings: ConversionWarning[];
 
+  // 에러 상태
+  error: ApiError | ConversionApiError | null;
+
   // UI 상태
   isLoading: boolean;
   isAutoConvert: boolean;
@@ -27,6 +31,8 @@ interface SqlState {
   setTargetDialect: (dialect: DialectType) => void;
   setConversionResult: (result: ConversionResponse | null) => void;
   setWarnings: (warnings: ConversionWarning[]) => void;
+  setError: (error: ApiError | ConversionApiError | null) => void;
+  clearError: () => void;
   setLoading: (loading: boolean) => void;
   setAutoConvert: (auto: boolean) => void;
   setPrettyFormat: (pretty: boolean) => void;
@@ -43,6 +49,7 @@ export const useSqlStore = create<SqlState>()(
       targetDialect: DialectType.POSTGRESQL,
       conversionResult: null,
       warnings: [],
+      error: null,
       isLoading: false,
       isAutoConvert: false,
       isPrettyFormat: true,  // 기본값: 포맷팅 활성화
@@ -54,6 +61,8 @@ export const useSqlStore = create<SqlState>()(
       setTargetDialect: (dialect: DialectType) => set({ targetDialect: dialect }),
       setConversionResult: (result: ConversionResponse | null) => set({ conversionResult: result }),
       setWarnings: (warnings: ConversionWarning[]) => set({ warnings }),
+      setError: (error: ApiError | ConversionApiError | null) => set({ error }),
+      clearError: () => set({ error: null }),
       setLoading: (loading: boolean) => set({ isLoading: loading }),
       setAutoConvert: (auto: boolean) => set({ isAutoConvert: auto }),
       setPrettyFormat: (pretty: boolean) => set({ isPrettyFormat: pretty }),
@@ -61,7 +70,8 @@ export const useSqlStore = create<SqlState>()(
       clearResults: () => set({
         outputSql: '',
         conversionResult: null,
-        warnings: []
+        warnings: [],
+        error: null
       })
     }),
     {

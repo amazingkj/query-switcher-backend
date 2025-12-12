@@ -1,14 +1,22 @@
-# SQL Query Switcher 🔄
+# SQL Switcher (SQL2SQL) 🔄
 
 데이터베이스 간 SQL 쿼리를 쉽게 변환하는 웹 애플리케이션
 
+🌐 **Live Demo**: [https://sql2sql.kr](https://sql2sql.kr)
+
+📦 **GitHub**: [https://github.com/amazingkj/query-switcher-backend](https://github.com/amazingkj/query-switcher-backend)
+
 ## 🌟 주요 기능
 
-- **다중 데이터베이스 지원**: MySQL, PostgreSQL, Oracle, Tibero 간 SQL 변환
+- **다중 데이터베이스 지원**: Oracle, MySQL, PostgreSQL 간 SQL 변환
 - **실시간 변환**: 자동 변환 모드로 입력과 동시에 결과 확인
 - **스마트 경고**: 변환 시 주의사항과 호환성 경고 제공
+- **구문 하이라이팅**: 데이터베이스별 맞춤 SQL 구문 강조
+- **SQL 차이 비교**: 원본과 변환 결과 비교 뷰어
+- **SQL 검증/실행**: 변환된 SQL 문법 검증 및 테스트 실행
 - **변환 히스토리**: 이전 변환 기록 저장 및 재사용
 - **SQL 스니펫**: 자주 사용하는 SQL 예제 제공
+- **다크 모드**: 눈의 피로를 줄이는 다크 테마 지원
 - **분석 대시보드**: 사용 통계 및 패턴 분석
 
 ## 🚀 Docker로 빠르게 시작하기
@@ -21,8 +29,8 @@
 
 ```bash
 # 1. 프로젝트 클론
-git clone https://github.com/yourusername/sql-converter.git
-cd sql-converter
+git clone https://github.com/amazingkj/query-switcher-backend.git
+cd query-switcher-backend
 
 # 2. Docker Compose로 실행
 docker-compose up -d
@@ -78,14 +86,15 @@ chmod +x docker-build.sh
 - **Framework**: Spring Boot 3.x
 - **Build Tool**: Gradle
 - **SQL Parser**: JSQLParser
-- **Testing**: JUnit 5, MockK
+- **Testing**: JUnit 5, Parameterized Tests
+- **Caching**: Caffeine
 
 ### Frontend
 - **Language**: TypeScript
 - **Framework**: React 18
 - **Build Tool**: Vite
 - **UI Library**: Tailwind CSS
-- **Editor**: Monaco Editor
+- **Editor**: Monaco Editor (구문 하이라이팅 포함)
 - **State Management**: Zustand
 - **API Client**: TanStack Query
 
@@ -98,50 +107,123 @@ chmod +x docker-build.sh
 ## 📁 프로젝트 구조
 
 ```
-sql-converter/
+sql-switcher/
 ├── backend/
 │   ├── src/
-│   │   └── main/kotlin/com/sqlswitcher/
-│   │       ├── api/           # REST Controllers
-│   │       ├── converter/     # SQL 변환 엔진
-│   │       ├── parser/        # SQL 파싱 서비스
-│   │       ├── model/         # 데이터 모델
-│   │       └── service/       # 비즈니스 로직
+│   │   ├── main/kotlin/com/sqlswitcher/
+│   │   │   ├── api/               # REST Controllers
+│   │   │   ├── converter/         # SQL 변환 엔진
+│   │   │   │   └── feature/       # 기능별 변환 서비스
+│   │   │   │       ├── procedure/ # 프로시저 변환
+│   │   │   │       ├── view/      # 뷰 변환
+│   │   │   │       └── function/  # 함수 변환
+│   │   │   ├── parser/            # SQL 파싱 서비스
+│   │   │   │   └── error/         # 에러 처리
+│   │   │   ├── model/             # 데이터 모델
+│   │   │   └── service/           # 비즈니스 로직
+│   │   └── test/kotlin/           # 단위 테스트
 │   ├── Dockerfile
 │   └── build.gradle.kts
 ├── frontend/
 │   ├── src/
-│   │   ├── components/       # React 컴포넌트
-│   │   ├── hooks/           # Custom Hooks
-│   │   ├── stores/          # 상태 관리
-│   │   ├── types/           # TypeScript 타입
-│   │   └── utils/           # 유틸리티 함수
+│   │   ├── components/            # React 컴포넌트
+│   │   ├── hooks/                 # Custom Hooks
+│   │   ├── stores/                # 상태 관리
+│   │   ├── types/                 # TypeScript 타입
+│   │   └── utils/                 # 유틸리티 함수
+│   │       └── sqlLanguageConfig.ts # 구문 하이라이팅 설정
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
-├── docker-compose.yml        # 개발용
-├── docker-compose.prod.yml   # 프로덕션용
+├── docs/
+│   └── SQL_CONVERSION_RULES.md    # 변환 규칙 문서
+├── docker-compose.yml             # 개발용
+├── docker-compose.prod.yml        # 프로덕션용
 └── README.md
 ```
 
 ## 🔄 지원되는 SQL 변환
 
-### 함수 변환
-- Oracle `SYSDATE` → MySQL `NOW()`, PostgreSQL `CURRENT_TIMESTAMP`
-- Oracle `NVL()` → MySQL `IFNULL()`, PostgreSQL `COALESCE()`
-- Oracle `LISTAGG()` → MySQL `GROUP_CONCAT()`, PostgreSQL `STRING_AGG()`
-- 그 외 다수
-
 ### 데이터 타입 변환
-- Oracle `NUMBER` → MySQL `DECIMAL`, PostgreSQL `NUMERIC`
-- Oracle `VARCHAR2` → MySQL/PostgreSQL `VARCHAR`
-- Oracle `CLOB` → MySQL `LONGTEXT`, PostgreSQL `TEXT`
-- 그 외 다수
 
-### 구문 변환
-- 인용 문자 변환 (Oracle `"` → MySQL `` ` ``, PostgreSQL 제거)
-- LIMIT/OFFSET 구문 변환
-- 조인 구문 최적화
+| Oracle | MySQL | PostgreSQL |
+|--------|-------|------------|
+| `VARCHAR2(n BYTE/CHAR)` | `VARCHAR(n)` | `VARCHAR(n)` |
+| `NUMBER(p)` | `TINYINT/SMALLINT/INT/BIGINT` | `SMALLINT/INTEGER/BIGINT` |
+| `NUMBER(p,s)` | `DECIMAL(p,s)` | `NUMERIC(p,s)` |
+| `CLOB` | `LONGTEXT` | `TEXT` |
+| `BLOB` | `LONGBLOB` | `BYTEA` |
+| `DATE` | `DATETIME` | `TIMESTAMP` |
+| `FLOAT(p)` | `FLOAT/DOUBLE` | `REAL/DOUBLE PRECISION` |
+
+| MySQL | PostgreSQL |
+|-------|------------|
+| `TINYINT(1)` | `BOOLEAN` |
+| `INT AUTO_INCREMENT` | `SERIAL` |
+| `BIGINT AUTO_INCREMENT` | `BIGSERIAL` |
+| `JSON` | `JSONB` |
+| `ENUM(...)` | `VARCHAR(255)` |
+
+### 함수 변환
+
+| Oracle | MySQL | PostgreSQL |
+|--------|-------|------------|
+| `SYSDATE` | `NOW()` | `CURRENT_TIMESTAMP` |
+| `NVL(a, b)` | `IFNULL(a, b)` | `COALESCE(a, b)` |
+| `SUBSTR(s, p, l)` | `SUBSTRING(s, p, l)` | `SUBSTRING(s, p, l)` |
+| `NVL2(a, b, c)` | `IF(a, b, c)` | `CASE WHEN a THEN b ELSE c END` |
+| `DECODE(...)` | `CASE ...` | `CASE ...` |
+
+| MySQL | PostgreSQL |
+|-------|------------|
+| `NOW()` | `CURRENT_TIMESTAMP` |
+| `CURDATE()` | `CURRENT_DATE` |
+| `RAND()` | `RANDOM()` |
+| `GROUP_CONCAT(...)` | `STRING_AGG(...)` |
+| `TRUNCATE(n, d)` | `TRUNC(n, d)` |
+| `LAST_INSERT_ID()` | `LASTVAL()` |
+
+### Oracle DDL 옵션 자동 제거
+
+MySQL/PostgreSQL 변환 시 다음 Oracle 전용 옵션들이 자동으로 제거됩니다:
+
+- `TABLESPACE`, `PCTFREE`, `PCTUSED`, `INITRANS`, `MAXTRANS`
+- `STORAGE (INITIAL, NEXT, MINEXTENTS, MAXEXTENTS, ...)`
+- `LOGGING/NOLOGGING`, `COMPRESS/NOCOMPRESS`, `CACHE/NOCACHE`
+- `PARALLEL/NOPARALLEL`, `MONITORING/NOMONITORING`
+- `SEGMENT CREATION IMMEDIATE/DEFERRED`
+- `ENABLE/DISABLE ROW MOVEMENT`
+- `FLASHBACK ARCHIVE`, `SECUREFILE/BASICFILE`
+- 스키마 접두사 (`"SCHEMA_OWNER"."TABLE_NAME"` → `"TABLE_NAME"`)
+
+### 수동 변환 필요 항목
+
+다음 항목들은 데이터베이스별 문법 차이가 크므로 경고 메시지와 함께 수동 검토가 필요합니다:
+
+- **파티션 테이블**: 데이터베이스별 파티션 문법 상이
+- **시퀀스**: Oracle 시퀀스 → MySQL AUTO_INCREMENT / PostgreSQL SERIAL
+- **트리거**: 트리거 문법이 완전히 다름
+- **계층 쿼리**: Oracle `CONNECT BY` → `WITH RECURSIVE` CTE
+- **패키지 함수**: `DBMS_OUTPUT`, `DBMS_RANDOM`, `UTL_FILE` 등
+
+자세한 변환 규칙은 `docs/SQL_CONVERSION_RULES.md` 문서를 참고하세요.
+
+## 🧪 테스트
+
+```bash
+# Backend 테스트
+cd backend
+./gradlew test
+
+# 특정 테스트만 실행
+./gradlew test --tests "com.sqlswitcher.converter.*Test"
+```
+
+테스트 커버리지:
+- 데이터 타입 변환 테스트 (`DataTypeConversionTest`)
+- 함수 변환 테스트 (`FunctionConversionTest`)
+- Oracle DDL 옵션 제거 테스트 (`OracleDDLOptionsTest`)
+- 통합 테스트 (`SqlConverterEngineIntegrationTest`)
 
 ## 🤝 기여하기
 
@@ -153,9 +235,6 @@ sql-converter/
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 있습니다. 자세한 내용은 `LICENSE` 파일을 참조하세요.
 
 ## 📞 문의
 
@@ -163,4 +242,4 @@ sql-converter/
 
 ---
 
-Made with ❤️ by SQL Converter Team
+Made with ❤️ by SQL2SQL 
