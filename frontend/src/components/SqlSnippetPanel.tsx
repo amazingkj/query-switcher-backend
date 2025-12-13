@@ -108,7 +108,7 @@ export const SqlSnippetPanel: React.FC<SqlSnippetPanelProps> = ({
                   </div>
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{snippet.description}</p>
-                <pre className="text-xs bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded border dark:border-gray-700 overflow-x-auto">
+                <pre className="text-xs bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-300 p-2 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
                   <code>{snippet.sql}</code>
                 </pre>
               </div>

@@ -329,6 +329,8 @@ class DataTypeConversionTest {
             DialectType.POSTGRESQL -> {
                 when (target) {
                     DialectType.MYSQL -> {
+                        // 타입 캐스팅(::) 제거를 먼저 수행
+                        result = result.replace(Regex("::\\w+", RegexOption.IGNORE_CASE), "")
                         result = result.replace(Regex("\\bSERIAL\\b", RegexOption.IGNORE_CASE), "INT AUTO_INCREMENT")
                         result = result.replace(Regex("\\bBIGSERIAL\\b", RegexOption.IGNORE_CASE), "BIGINT AUTO_INCREMENT")
                         result = result.replace(Regex("\\bTEXT\\b", RegexOption.IGNORE_CASE), "LONGTEXT")
@@ -338,8 +340,6 @@ class DataTypeConversionTest {
                         result = result.replace(Regex("\\bDOUBLE PRECISION\\b", RegexOption.IGNORE_CASE), "DOUBLE")
                         result = result.replace(Regex("\\bUUID\\b", RegexOption.IGNORE_CASE), "CHAR(36)")
                         result = result.replace(Regex("\\bJSONB\\b", RegexOption.IGNORE_CASE), "JSON")
-                        result = result.replace(Regex("::INTEGER\\b", RegexOption.IGNORE_CASE), "")
-                        result = result.replace(Regex("::TEXT\\b", RegexOption.IGNORE_CASE), "")
                     }
                     else -> {}
                 }
