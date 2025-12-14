@@ -1,6 +1,7 @@
 package com.sqlswitcher.converter.feature.function
 
 import com.sqlswitcher.converter.DialectType
+import com.sqlswitcher.converter.registry.FunctionConversionRegistry
 import com.sqlswitcher.converter.util.SqlParsingUtils
 
 /**
@@ -8,6 +9,26 @@ import com.sqlswitcher.converter.util.SqlParsingUtils
  * Oracle/PostgreSQL: || ↔ MySQL: CONCAT()
  */
 object StringConcatConverter {
+
+    // 변환 레지스트리
+    private val conversionRegistry = FunctionConversionRegistry().apply {
+        // Oracle → MySQL: || → CONCAT()
+        register(DialectType.ORACLE, DialectType.MYSQL) { sql, rules ->
+            convertPipeConcatToConcat(sql, rules)
+        }
+        // PostgreSQL → MySQL: || → CONCAT()
+        register(DialectType.POSTGRESQL, DialectType.MYSQL) { sql, rules ->
+            convertPipeConcatToConcat(sql, rules)
+        }
+        // MySQL → Oracle: CONCAT() → ||
+        register(DialectType.MYSQL, DialectType.ORACLE) { sql, rules ->
+            convertConcatToPipeConcat(sql, rules)
+        }
+        // MySQL → PostgreSQL: CONCAT() → ||
+        register(DialectType.MYSQL, DialectType.POSTGRESQL) { sql, rules ->
+            convertConcatToPipeConcat(sql, rules)
+        }
+    }
 
     /**
      * 문자열 연결 변환 메인 함수
@@ -18,21 +39,7 @@ object StringConcatConverter {
         targetDialect: DialectType,
         appliedRules: MutableList<String>
     ): String {
-        var result = sql
-
-        // Oracle/PostgreSQL → MySQL: || → CONCAT()
-        if ((sourceDialect == DialectType.ORACLE || sourceDialect == DialectType.POSTGRESQL)
-            && targetDialect == DialectType.MYSQL) {
-            result = convertPipeConcatToConcat(result, appliedRules)
-        }
-
-        // MySQL → Oracle/PostgreSQL: CONCAT() → ||
-        if (sourceDialect == DialectType.MYSQL &&
-            (targetDialect == DialectType.ORACLE || targetDialect == DialectType.POSTGRESQL)) {
-            result = convertConcatToPipeConcat(result, appliedRules)
-        }
-
-        return result
+        return conversionRegistry.apply(sql, sourceDialect, targetDialect, appliedRules)
     }
 
     /**

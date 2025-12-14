@@ -147,6 +147,19 @@ class SqlConverterEngine(
         appliedRules: MutableList<String>,
         startTime: Long
     ): ConversionResult {
+        // 0. 파싱 스킵 대상인지 먼저 확인 (PL/SQL, PACKAGE, TYPE 등)
+        if (shouldSkipParsing(sql)) {
+            warnings.add(createWarning(
+                type = WarningType.SYNTAX_DIFFERENCE,
+                message = "PL/SQL 또는 Oracle 전용 객체 - 문자열 기반 변환을 수행합니다.",
+                severity = WarningSeverity.INFO,
+                suggestion = "CREATE PROCEDURE/FUNCTION/PACKAGE/TYPE/TRIGGER 등은 AST 파싱 없이 처리됩니다."
+            ))
+            return performFallbackConversion(
+                sql, sourceDialectType, targetDialectType, warnings, appliedRules, startTime
+            )
+        }
+
         // 1. SQL 파싱 및 AST 분석
         val parseResult = sqlParserService.parseSql(sql)
         if (parseResult.parseException != null) {
@@ -313,6 +326,106 @@ class SqlConverterEngine(
             warnings = warnings,
             appliedRules = appliedRules
         )
+    }
+
+    /**
+     * 파싱을 스킵해야 하는 SQL인지 확인
+     * PL/SQL, PACKAGE, TYPE, TRIGGER 등 JSQLParser가 처리하지 못하는 구문
+     */
+    private fun shouldSkipParsing(sql: String): Boolean {
+        val upperSql = sql.uppercase().trim()
+
+        // CREATE OR REPLACE 패턴 체크
+        val createOrReplacePattern = Regex(
+            """^\s*CREATE\s+(?:OR\s+REPLACE\s+)?""",
+            RegexOption.IGNORE_CASE
+        )
+
+        if (!createOrReplacePattern.containsMatchIn(sql)) {
+            // CREATE 문이 아니면 계층형 쿼리, MERGE 등 확인
+            return isHierarchicalQuery(upperSql) || isComplexMerge(upperSql)
+        }
+
+        // PL/SQL 객체 타입들
+        val plsqlObjects = listOf(
+            "PROCEDURE", "FUNCTION", "PACKAGE", "PACKAGE BODY",
+            "TYPE", "TYPE BODY", "TRIGGER", "LIBRARY",
+            "JAVA SOURCE", "JAVA CLASS"
+        )
+
+        for (objType in plsqlObjects) {
+            val pattern = Regex(
+                """CREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?$objType\b""",
+                RegexOption.IGNORE_CASE
+            )
+            if (pattern.containsMatchIn(sql)) {
+                return true
+            }
+        }
+
+        // BEGIN...END 블록이 포함된 경우 (익명 PL/SQL 블록)
+        if (upperSql.contains("BEGIN") && upperSql.contains("END")) {
+            // SELECT 문 내의 CASE WHEN ... END는 제외
+            val beginCount = Regex("""\bBEGIN\b""").findAll(upperSql).count()
+            val caseEndCount = Regex("""\bCASE\b""").findAll(upperSql).count()
+            if (beginCount > 0 && beginCount > caseEndCount) {
+                return true
+            }
+        }
+
+        // DECLARE 블록
+        if (upperSql.startsWith("DECLARE")) {
+            return true
+        }
+
+        // Oracle DIRECTORY, CONTEXT, SYNONYM 등
+        val oracleOnlyObjects = listOf(
+            "DIRECTORY", "CONTEXT", "SYNONYM", "PUBLIC SYNONYM",
+            "DATABASE LINK", "DBLINK", "MATERIALIZED VIEW LOG",
+            "DIMENSION", "CLUSTER", "CONTROLFILE", "SPFILE",
+            "PFILE", "ROLLBACK SEGMENT", "UNDO TABLESPACE"
+        )
+
+        for (objType in oracleOnlyObjects) {
+            if (upperSql.contains("CREATE") && upperSql.contains(objType)) {
+                return true
+            }
+        }
+
+        // PARTITION BY가 복잡한 경우 (서브파티션 포함)
+        if (upperSql.contains("PARTITION BY") && upperSql.contains("SUBPARTITION")) {
+            return true
+        }
+
+        // CONNECT BY 계층형 쿼리
+        if (isHierarchicalQuery(upperSql)) {
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Oracle 계층형 쿼리인지 확인
+     */
+    private fun isHierarchicalQuery(upperSql: String): Boolean {
+        return upperSql.contains("CONNECT BY") ||
+               upperSql.contains("START WITH") && upperSql.contains("PRIOR") ||
+               upperSql.contains("SYS_CONNECT_BY_PATH") ||
+               upperSql.contains("CONNECT_BY_ROOT") ||
+               upperSql.contains("CONNECT_BY_ISLEAF") ||
+               upperSql.contains("CONNECT_BY_ISCYCLE")
+    }
+
+    /**
+     * 복잡한 MERGE 문인지 확인 (다중 WHEN 절 등)
+     */
+    private fun isComplexMerge(upperSql: String): Boolean {
+        if (!upperSql.contains("MERGE")) return false
+
+        // WHEN MATCHED/NOT MATCHED가 여러 개인 경우
+        val whenMatchedCount = Regex("""WHEN\s+(NOT\s+)?MATCHED""").findAll(upperSql).count()
+        return whenMatchedCount > 2
     }
 
     private fun createWarning(
