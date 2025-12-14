@@ -7,14 +7,9 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 
 /**
- * 테스트용 DialectType enum
- */
-enum class DialectType {
-    ORACLE, MYSQL, POSTGRESQL
-}
-
-/**
  * 데이터타입 변환 단위 테스트
+ *
+ * 참고: DialectType은 DatabaseDialect.kt에 정의되어 있습니다.
  */
 class DataTypeConversionTest {
 
