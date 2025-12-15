@@ -42,10 +42,53 @@ class SqlValidationService {
             )
         }
 
+        // SQL 전처리: 주석 제거 및 정리
+        val cleanedSql = preprocessSql(sql)
+
+        // 빈 SQL이 된 경우 (주석만 있었던 경우)
+        if (cleanedSql.isBlank()) {
+            return ValidationResult(
+                isValid = true,
+                warnings = listOf("SQL에 실행 가능한 문장이 없습니다 (주석만 포함)."),
+                parsedStatementType = "Comment"
+            )
+        }
+
+        // COMMENT ON 문인지 확인 (JSQLParser가 지원하지 않음)
+        if (isCommentStatement(cleanedSql)) {
+            val commentWarnings = validateCommentStatement(cleanedSql)
+            return ValidationResult(
+                isValid = commentWarnings.isEmpty(),
+                warnings = if (commentWarnings.isEmpty())
+                    listOf("COMMENT 문은 JSQLParser에서 완전히 지원되지 않지만, 기본 구조는 올바릅니다.")
+                    else commentWarnings,
+                parsedStatementType = "Comment",
+                errors = if (commentWarnings.isNotEmpty())
+                    listOf(ValidationError(commentWarnings.first()))
+                    else emptyList()
+            )
+        }
+
+        // 복수 문장 처리: 세미콜론으로 분리하여 각각 검증
+        val statements = splitStatements(cleanedSql)
+
         return try {
-            // JSQLParser로 파싱 시도
-            val statement = CCJSqlParserUtil.parse(sql)
-            val statementType = statement.javaClass.simpleName
+            var lastStatementType: String? = null
+
+            for (stmt in statements) {
+                val trimmedStmt = stmt.trim()
+                if (trimmedStmt.isBlank()) continue
+
+                // COMMENT ON 문 건너뛰기
+                if (isCommentStatement(trimmedStmt)) {
+                    lastStatementType = "Comment"
+                    continue
+                }
+
+                // JSQLParser로 파싱 시도
+                val statement = CCJSqlParserUtil.parse(trimmedStmt)
+                lastStatementType = statement.javaClass.simpleName
+            }
 
             // 방언별 키워드/함수 검증
             val dialectWarnings = validateDialectSpecifics(sql, dialect)
@@ -54,7 +97,7 @@ class SqlValidationService {
             ValidationResult(
                 isValid = true,
                 warnings = warnings,
-                parsedStatementType = statementType
+                parsedStatementType = lastStatementType
             )
         } catch (e: Exception) {
             // 파싱 오류 분석
@@ -73,6 +116,236 @@ class SqlValidationService {
                 errors = errors
             )
         }
+    }
+
+    /**
+     * SQL 전처리: 주석 제거 및 Oracle 특수 구문 정리
+     */
+    private fun preprocessSql(sql: String): String {
+        var result = sql
+
+        // 블록 주석 제거 (/* ... */) - 힌트 제외
+        result = result.replace(Regex("/\\*(?!\\+)[\\s\\S]*?\\*/"), " ")
+
+        // 라인 주석 제거 (-- ...)
+        result = result.replace(Regex("--[^\r\n]*"), " ")
+
+        // Oracle 특수 구문 전처리 (파서 호환성)
+        result = preprocessOracleSyntax(result)
+
+        // 연속 공백 정리
+        result = result.replace(Regex("\\s+"), " ")
+
+        return result.trim()
+    }
+
+    /**
+     * Oracle 전용 문법을 JSQLParser가 파싱 가능한 형태로 전처리
+     */
+    private fun preprocessOracleSyntax(sql: String): String {
+        var result = sql
+
+        // 1. CASCADE CONSTRAINTS → CASCADE
+        result = result.replace(
+            Regex("""CASCADE\s+CONSTRAINTS""", RegexOption.IGNORE_CASE),
+            "CASCADE"
+        )
+
+        // 2. PURGE 키워드 제거
+        result = result.replace(
+            Regex("""\s+PURGE\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)),
+            ""
+        )
+
+        // 3. TABLESPACE 절 제거
+        result = result.replace(
+            Regex("""\s+TABLESPACE\s+["']?\w+["']?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 4. STORAGE 절 제거
+        result = result.replace(
+            Regex("""\s*STORAGE\s*\([\s\S]*?\)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 5. 물리적 옵션 제거
+        result = result.replace(
+            Regex("""\s+(PCTFREE|PCTUSED|INITRANS|MAXTRANS)\s+\d+""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 6. LOGGING/NOLOGGING 제거
+        result = result.replace(
+            Regex("""\s+(NO)?LOGGING\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 7. COMPRESS/NOCOMPRESS 제거
+        result = result.replace(
+            Regex("""\s+(NO)?COMPRESS(\s+FOR\s+\w+)?(\s+\d+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 8. PARALLEL/NOPARALLEL 제거
+        result = result.replace(
+            Regex("""\s+(NO)?PARALLEL(\s+\d+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 9. CACHE/NOCACHE 제거
+        result = result.replace(
+            Regex("""\s+(NO)?CACHE\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 10. SEGMENT CREATION 제거
+        result = result.replace(
+            Regex("""\s+SEGMENT\s+CREATION\s+(IMMEDIATE|DEFERRED)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 11. ENABLE/DISABLE ROW MOVEMENT 제거
+        result = result.replace(
+            Regex("""\s+(ENABLE|DISABLE)\s+ROW\s+MOVEMENT""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 12. USING INDEX 제거
+        result = result.replace(
+            Regex("""\s+USING\s+INDEX(\s+TABLESPACE\s+\w+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 13. ENABLE/DISABLE VALIDATE/NOVALIDATE 제거
+        result = result.replace(
+            Regex("""\s+(ENABLE|DISABLE)(\s+(VALIDATE|NOVALIDATE))?(?=\s*[,)]|\s*$)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 14. Oracle 힌트 제거
+        result = result.replace(
+            Regex("""/\*\+[^*]+\*/"""),
+            ""
+        )
+
+        // 15. BYTE/CHAR 키워드 제거
+        result = result.replace(
+            Regex("""\(\s*(\d+)\s+(BYTE|CHAR)\s*\)""", RegexOption.IGNORE_CASE),
+            "($1)"
+        )
+
+        // 16. DEFAULT ON NULL 제거
+        result = result.replace(
+            Regex("""\s+DEFAULT\s+ON\s+NULL\b""", RegexOption.IGNORE_CASE),
+            " DEFAULT"
+        )
+
+        // 17. VISIBLE/INVISIBLE 제거
+        result = result.replace(
+            Regex("""\s+(IN)?VISIBLE\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 18. ORGANIZATION 제거
+        result = result.replace(
+            Regex("""\s+ORGANIZATION\s+(HEAP|INDEX|EXTERNAL)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 19. Oracle 특수 데이터타입 변환
+        result = result.replace(Regex("""\bBINARY_FLOAT\b""", RegexOption.IGNORE_CASE), "FLOAT")
+        result = result.replace(Regex("""\bBINARY_DOUBLE\b""", RegexOption.IGNORE_CASE), "DOUBLE")
+        result = result.replace(Regex("""\bXMLTYPE\b""", RegexOption.IGNORE_CASE), "CLOB")
+
+        // 20. INTERVAL 타입 단순화
+        result = result.replace(
+            Regex("""\bINTERVAL\s+YEAR(\s*\(\d+\))?\s+TO\s+MONTH\b""", RegexOption.IGNORE_CASE),
+            "VARCHAR(50)"
+        )
+        result = result.replace(
+            Regex("""\bINTERVAL\s+DAY(\s*\(\d+\))?\s+TO\s+SECOND(\s*\(\d+\))?\b""", RegexOption.IGNORE_CASE),
+            "VARCHAR(50)"
+        )
+
+        return result
+    }
+
+    /**
+     * COMMENT ON 문인지 확인
+     */
+    private fun isCommentStatement(sql: String): Boolean {
+        val upperSql = sql.trim().uppercase()
+        return upperSql.startsWith("COMMENT ON") ||
+               upperSql.startsWith("COMMENT ON TABLE") ||
+               upperSql.startsWith("COMMENT ON COLUMN")
+    }
+
+    /**
+     * COMMENT 문 기본 검증
+     */
+    private fun validateCommentStatement(sql: String): List<String> {
+        val upperSql = sql.trim().uppercase()
+        val warnings = mutableListOf<String>()
+
+        // 기본 구조 검증: COMMENT ON (TABLE|COLUMN) ... IS '...'
+        val commentPattern = Regex(
+            "^COMMENT\\s+ON\\s+(TABLE|COLUMN)\\s+[\\w.]+\\s+IS\\s+['\"].*['\"]\\s*;?$",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+
+        if (!commentPattern.matches(sql.trim())) {
+            // 더 유연한 검증
+            if (!upperSql.contains(" IS ")) {
+                warnings.add("COMMENT 문에 IS 키워드가 필요합니다. 예: COMMENT ON TABLE table_name IS 'description'")
+            }
+        }
+
+        return warnings
+    }
+
+    /**
+     * 세미콜론으로 문장 분리 (문자열 내부 세미콜론 제외)
+     */
+    private fun splitStatements(sql: String): List<String> {
+        val statements = mutableListOf<String>()
+        var current = StringBuilder()
+        var inString = false
+        var stringChar = ' '
+
+        for (i in sql.indices) {
+            val c = sql[i]
+
+            when {
+                // 문자열 시작/종료 감지
+                (c == '\'' || c == '"') && (i == 0 || sql[i - 1] != '\\') -> {
+                    if (!inString) {
+                        inString = true
+                        stringChar = c
+                    } else if (c == stringChar) {
+                        inString = false
+                    }
+                    current.append(c)
+                }
+                // 세미콜론 (문자열 밖)
+                c == ';' && !inString -> {
+                    val stmt = current.toString().trim()
+                    if (stmt.isNotBlank()) {
+                        statements.add(stmt)
+                    }
+                    current = StringBuilder()
+                }
+                else -> current.append(c)
+            }
+        }
+
+        // 마지막 문장 (세미콜론 없는 경우)
+        val lastStmt = current.toString().trim()
+        if (lastStmt.isNotBlank()) {
+            statements.add(lastStmt)
+        }
+
+        return statements
     }
 
     /**

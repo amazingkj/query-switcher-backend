@@ -7,14 +7,9 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 
 /**
- * 테스트용 DialectType enum
- */
-enum class DialectType {
-    ORACLE, MYSQL, POSTGRESQL
-}
-
-/**
  * 데이터타입 변환 단위 테스트
+ *
+ * 참고: DialectType은 DatabaseDialect.kt에 정의되어 있습니다.
  */
 class DataTypeConversionTest {
 
@@ -329,6 +324,8 @@ class DataTypeConversionTest {
             DialectType.POSTGRESQL -> {
                 when (target) {
                     DialectType.MYSQL -> {
+                        // 타입 캐스팅(::) 제거를 먼저 수행
+                        result = result.replace(Regex("::\\w+", RegexOption.IGNORE_CASE), "")
                         result = result.replace(Regex("\\bSERIAL\\b", RegexOption.IGNORE_CASE), "INT AUTO_INCREMENT")
                         result = result.replace(Regex("\\bBIGSERIAL\\b", RegexOption.IGNORE_CASE), "BIGINT AUTO_INCREMENT")
                         result = result.replace(Regex("\\bTEXT\\b", RegexOption.IGNORE_CASE), "LONGTEXT")
@@ -338,8 +335,6 @@ class DataTypeConversionTest {
                         result = result.replace(Regex("\\bDOUBLE PRECISION\\b", RegexOption.IGNORE_CASE), "DOUBLE")
                         result = result.replace(Regex("\\bUUID\\b", RegexOption.IGNORE_CASE), "CHAR(36)")
                         result = result.replace(Regex("\\bJSONB\\b", RegexOption.IGNORE_CASE), "JSON")
-                        result = result.replace(Regex("::INTEGER\\b", RegexOption.IGNORE_CASE), "")
-                        result = result.replace(Regex("::TEXT\\b", RegexOption.IGNORE_CASE), "")
                     }
                     else -> {}
                 }

@@ -1,0 +1,243 @@
+/**
+ * SQL Syntax Highlighting Styles
+ * SQL 구문 하이라이팅을 위한 CSS 스타일
+ */
+
+/* 기본 SQL 코드 블록 스타일 */
+.sql-code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* 라이트 테마 */
+.sql-code.light {
+    background-color: #f8f9fa;
+    color: #24292e;
+    border: 1px solid #e1e4e8;
+}
+
+.sql-code.light .sql-keyword {
+    color: #d73a49;
+    font-weight: 600;
+}
+
+.sql-code.light .sql-function {
+    color: #6f42c1;
+    font-weight: 500;
+}
+
+.sql-code.light .sql-string {
+    color: #22863a;
+}
+
+.sql-code.light .sql-number {
+    color: #005cc5;
+}
+
+.sql-code.light .sql-comment {
+    color: #6a737d;
+    font-style: italic;
+}
+
+.sql-code.light .sql-operator {
+    color: #d73a49;
+}
+
+.sql-code.light .sql-identifier {
+    color: #24292e;
+}
+
+.sql-code.light .sql-parenthesis {
+    color: #6a737d;
+}
+
+.sql-code.light .sql-punctuation {
+    color: #24292e;
+}
+
+/* 다크 테마 */
+.sql-code.dark {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+.sql-code.dark .sql-keyword {
+    color: #569cd6;
+    font-weight: 600;
+}
+
+.sql-code.dark .sql-function {
+    color: #dcdcaa;
+    font-weight: 500;
+}
+
+.sql-code.dark .sql-string {
+    color: #ce9178;
+}
+
+.sql-code.dark .sql-number {
+    color: #b5cea8;
+}
+
+.sql-code.dark .sql-comment {
+    color: #6a9955;
+    font-style: italic;
+}
+
+.sql-code.dark .sql-operator {
+    color: #d4d4d4;
+}
+
+.sql-code.dark .sql-identifier {
+    color: #9cdcfe;
+}
+
+.sql-code.dark .sql-parenthesis {
+    color: #ffd700;
+}
+
+.sql-code.dark .sql-punctuation {
+    color: #d4d4d4;
+}
+
+/* 드라큘라 테마 */
+.sql-code.dracula {
+    background-color: #282a36;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+}
+
+.sql-code.dracula .sql-keyword {
+    color: #ff79c6;
+    font-weight: 600;
+}
+
+.sql-code.dracula .sql-function {
+    color: #50fa7b;
+    font-weight: 500;
+}
+
+.sql-code.dracula .sql-string {
+    color: #f1fa8c;
+}
+
+.sql-code.dracula .sql-number {
+    color: #bd93f9;
+}
+
+.sql-code.dracula .sql-comment {
+    color: #6272a4;
+    font-style: italic;
+}
+
+.sql-code.dracula .sql-operator {
+    color: #ff79c6;
+}
+
+.sql-code.dracula .sql-identifier {
+    color: #f8f8f2;
+}
+
+.sql-code.dracula .sql-parenthesis {
+    color: #f8f8f2;
+}
+
+.sql-code.dracula .sql-punctuation {
+    color: #f8f8f2;
+}
+
+/* 모노카이 테마 */
+.sql-code.monokai {
+    background-color: #272822;
+    color: #f8f8f2;
+    border: 1px solid #3e3d32;
+}
+
+.sql-code.monokai .sql-keyword {
+    color: #f92672;
+    font-weight: 600;
+}
+
+.sql-code.monokai .sql-function {
+    color: #66d9ef;
+    font-weight: 500;
+}
+
+.sql-code.monokai .sql-string {
+    color: #e6db74;
+}
+
+.sql-code.monokai .sql-number {
+    color: #ae81ff;
+}
+
+.sql-code.monokai .sql-comment {
+    color: #75715e;
+    font-style: italic;
+}
+
+.sql-code.monokai .sql-operator {
+    color: #f92672;
+}
+
+.sql-code.monokai .sql-identifier {
+    color: #a6e22e;
+}
+
+.sql-code.monokai .sql-parenthesis {
+    color: #f8f8f2;
+}
+
+.sql-code.monokai .sql-punctuation {
+    color: #f8f8f2;
+}
+
+/* 줄 번호 스타일 (옵션) */
+.sql-code.with-line-numbers {
+    counter-reset: line;
+}
+
+.sql-code.with-line-numbers .line::before {
+    counter-increment: line;
+    content: counter(line);
+    display: inline-block;
+    width: 3em;
+    padding-right: 1em;
+    margin-right: 1em;
+    text-align: right;
+    color: #6a737d;
+    border-right: 1px solid #e1e4e8;
+    user-select: none;
+}
+
+.sql-code.dark.with-line-numbers .line::before {
+    color: #6a737d;
+    border-right-color: #3c3c3c;
+}
+
+/* 호버 효과 */
+.sql-code .sql-keyword:hover,
+.sql-code .sql-function:hover {
+    text-decoration: underline;
+    cursor: help;
+}
+
+/* 선택 스타일 */
+.sql-code ::selection {
+    background-color: rgba(33, 150, 243, 0.3);
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+    .sql-code {
+        font-size: 12px;
+        padding: 12px;
+    }
+}

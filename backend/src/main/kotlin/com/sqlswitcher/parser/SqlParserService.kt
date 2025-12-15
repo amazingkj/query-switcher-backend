@@ -274,9 +274,9 @@ class SqlParserService(
             ""
         )
 
-        // 4. TABLESPACE 절 (파티션 내부) - 파티션 정의 내 단독 라인
+        // 4. TABLESPACE 절 제거 (전체)
         result = result.replace(
-            Regex("""^\s*TABLESPACE\s+\w+\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)),
+            Regex("""\s+TABLESPACE\s+["']?\w+["']?""", RegexOption.IGNORE_CASE),
             ""
         )
 
@@ -286,14 +286,157 @@ class SqlParserService(
             ""
         )
 
-        // 6. PCTFREE, INITRANS 등 물리적 옵션 라인 제거
+        // 6. PCTFREE, INITRANS 등 물리적 옵션 제거 (단독 또는 인라인)
         result = result.replace(
-            Regex("""^\s*(PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING|COMPRESS|NOCOMPRESS)(\s+\d+)?\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)),
+            Regex("""\s+(PCTFREE|PCTUSED|INITRANS|MAXTRANS)\s+\d+""", RegexOption.IGNORE_CASE),
             ""
         )
 
-        // 7. 연속된 빈 줄 정리
+        // 7. LOGGING/NOLOGGING 제거
+        result = result.replace(
+            Regex("""\s+(NO)?LOGGING\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 8. COMPRESS/NOCOMPRESS 제거
+        result = result.replace(
+            Regex("""\s+(NO)?COMPRESS(\s+FOR\s+\w+)?(\s+\d+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 9. PARALLEL/NOPARALLEL 제거
+        result = result.replace(
+            Regex("""\s+(NO)?PARALLEL(\s+\d+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 10. CACHE/NOCACHE 제거
+        result = result.replace(
+            Regex("""\s+(NO)?CACHE\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 11. MONITORING/NOMONITORING 제거
+        result = result.replace(
+            Regex("""\s+(NO)?MONITORING\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 12. SEGMENT CREATION 제거
+        result = result.replace(
+            Regex("""\s+SEGMENT\s+CREATION\s+(IMMEDIATE|DEFERRED)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 13. ENABLE/DISABLE ROW MOVEMENT 제거
+        result = result.replace(
+            Regex("""\s+(ENABLE|DISABLE)\s+ROW\s+MOVEMENT""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 14. FLASHBACK ARCHIVE 제거
+        result = result.replace(
+            Regex("""\s+FLASHBACK\s+ARCHIVE[^;]*""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 15. RESULT_CACHE 힌트 제거
+        result = result.replace(
+            Regex("""/\*\+?\s*RESULT_CACHE[^*]*\*/""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 16. LOB 저장소 옵션 제거 (SECUREFILE/BASICFILE)
+        result = result.replace(
+            Regex("""\s+LOB\s*\([^)]+\)\s+STORE\s+AS\s+(SECUREFILE|BASICFILE)?[^)]*\)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 17. USING INDEX 절 제거 (제약조건 내)
+        result = result.replace(
+            Regex("""\s+USING\s+INDEX(\s+TABLESPACE\s+\w+)?""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 18. ENABLE/DISABLE VALIDATE/NOVALIDATE 제거 (제약조건 상태)
+        result = result.replace(
+            Regex("""\s+(ENABLE|DISABLE)(\s+(VALIDATE|NOVALIDATE))?(?=\s*[,)]|\s*$)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 19. RELY/NORELY 제거
+        result = result.replace(
+            Regex("""\s+(NO)?RELY\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 20. Oracle 힌트 단순화 (복잡한 힌트 제거)
+        result = result.replace(
+            Regex("""/\*\+[^*]+\*/"""),
+            "/* hint removed */"
+        )
+
+        // 21. BYTE/CHAR 키워드 제거 (VARCHAR2(100 BYTE))
+        result = result.replace(
+            Regex("""\(\s*(\d+)\s+(BYTE|CHAR)\s*\)""", RegexOption.IGNORE_CASE),
+            "($1)"
+        )
+
+        // 22. DEFAULT ON NULL 제거 (Oracle 12c+)
+        result = result.replace(
+            Regex("""\s+DEFAULT\s+ON\s+NULL\b""", RegexOption.IGNORE_CASE),
+            " DEFAULT"
+        )
+
+        // 23. VISIBLE/INVISIBLE 컬럼 제거
+        result = result.replace(
+            Regex("""\s+(IN)?VISIBLE\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 24. ORGANIZATION (HEAP|INDEX) 제거
+        result = result.replace(
+            Regex("""\s+ORGANIZATION\s+(HEAP|INDEX|EXTERNAL)""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 25. ROWDEPENDENCIES/NOROWDEPENDENCIES 제거
+        result = result.replace(
+            Regex("""\s+(NO)?ROWDEPENDENCIES\b""", RegexOption.IGNORE_CASE),
+            ""
+        )
+
+        // 26. Oracle 특수 데이터타입을 일반 타입으로 변환 (파서 호환)
+        result = result.replace(
+            Regex("""\bBINARY_FLOAT\b""", RegexOption.IGNORE_CASE),
+            "FLOAT"
+        )
+        result = result.replace(
+            Regex("""\bBINARY_DOUBLE\b""", RegexOption.IGNORE_CASE),
+            "DOUBLE"
+        )
+
+        // 27. INTERVAL 타입 단순화
+        result = result.replace(
+            Regex("""\bINTERVAL\s+YEAR(\s*\(\d+\))?\s+TO\s+MONTH\b""", RegexOption.IGNORE_CASE),
+            "VARCHAR(50)"
+        )
+        result = result.replace(
+            Regex("""\bINTERVAL\s+DAY(\s*\(\d+\))?\s+TO\s+SECOND(\s*\(\d+\))?\b""", RegexOption.IGNORE_CASE),
+            "VARCHAR(50)"
+        )
+
+        // 28. XMLTYPE 단순화
+        result = result.replace(
+            Regex("""\bXMLTYPE\b""", RegexOption.IGNORE_CASE),
+            "CLOB"
+        )
+
+        // 29. 연속된 빈 줄 정리
         result = result.replace(Regex("""\n\s*\n\s*\n"""), "\n\n")
+
+        // 30. 연속된 공백 정리
+        result = result.replace(Regex("""  +"""), " ")
 
         return result.trim()
     }

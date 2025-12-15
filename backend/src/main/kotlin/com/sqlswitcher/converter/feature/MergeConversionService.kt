@@ -178,15 +178,28 @@ class MergeConversionService(
                         Regex("""VALUES\s*\(\s*(\w+)\s*\)""", RegexOption.IGNORE_CASE)
                     ) { m -> "EXCLUDED.${m.groupValues[1]}" }
 
-                    warnings.add(ConversionWarning(
-                        WarningType.MANUAL_REVIEW_NEEDED,
-                        "ON CONFLICT 절에 충돌 컬럼을 지정해야 합니다.",
-                        WarningSeverity.WARNING,
-                        "ON CONFLICT (primary_key_column) DO UPDATE SET ... 형식으로 변환하세요."
-                    ))
+                    // INSERT 문에서 테이블명과 컬럼 추출 시도
+                    val conflictColumn = inferConflictColumn(sql)
 
-                    result = result.replace(match.value, "ON CONFLICT (/* 충돌 컬럼 지정 필요 */) DO UPDATE SET $pgUpdateClause")
-                    appliedRules.add("ON DUPLICATE KEY UPDATE → ON CONFLICT DO UPDATE")
+                    if (conflictColumn != null) {
+                        result = result.replace(match.value, "ON CONFLICT ($conflictColumn) DO UPDATE SET $pgUpdateClause")
+                        appliedRules.add("ON DUPLICATE KEY UPDATE → ON CONFLICT ($conflictColumn) DO UPDATE")
+                        warnings.add(ConversionWarning(
+                            WarningType.SYNTAX_DIFFERENCE,
+                            "ON CONFLICT 컬럼이 '$conflictColumn'으로 추론되었습니다.",
+                            WarningSeverity.INFO,
+                            "추론된 컬럼이 실제 PRIMARY KEY 또는 UNIQUE 컬럼인지 확인하세요."
+                        ))
+                    } else {
+                        warnings.add(ConversionWarning(
+                            WarningType.MANUAL_REVIEW_NEEDED,
+                            "ON CONFLICT 절에 충돌 컬럼을 지정해야 합니다.",
+                            WarningSeverity.WARNING,
+                            "ON CONFLICT (primary_key_column) DO UPDATE SET ... 형식으로 변환하세요."
+                        ))
+                        result = result.replace(match.value, "ON CONFLICT (/* 충돌 컬럼 지정 필요 */) DO UPDATE SET $pgUpdateClause")
+                        appliedRules.add("ON DUPLICATE KEY UPDATE → ON CONFLICT DO UPDATE")
+                    }
                 }
 
                 // INSERT IGNORE → ON CONFLICT DO NOTHING
@@ -225,6 +238,32 @@ class MergeConversionService(
                 appliedRules.add("MySQL UPSERT → Oracle MERGE 수동 변환 필요")
                 return "-- Oracle: Use MERGE INTO syntax\n$sql"
             }
+        }
+    }
+
+    /**
+     * INSERT 문에서 충돌 컬럼 추론
+     * - 첫 번째 컬럼이 id, *_id 패턴이면 해당 컬럼 사용
+     * - 그 외에는 null 반환
+     */
+    private fun inferConflictColumn(sql: String): String? {
+        // INSERT INTO table (col1, col2, ...) 패턴에서 컬럼 추출
+        val insertPattern = Regex(
+            """INSERT\s+(?:IGNORE\s+)?INTO\s+\w+\s*\(\s*(\w+)""",
+            RegexOption.IGNORE_CASE
+        )
+
+        val match = insertPattern.find(sql)
+        val firstColumn = match?.groupValues?.get(1)?.lowercase()
+
+        // 첫 번째 컬럼이 id 관련이면 사용
+        return when {
+            firstColumn == "id" -> "id"
+            firstColumn?.endsWith("_id") == true -> firstColumn
+            firstColumn == "uuid" -> "uuid"
+            firstColumn == "code" -> "code"
+            firstColumn == "key" -> "key"
+            else -> null
         }
     }
 
