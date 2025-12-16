@@ -5,25 +5,33 @@ import com.sqlswitcher.converter.ConversionWarning
 import com.sqlswitcher.converter.feature.procedure.OracleProcedureConverter
 import com.sqlswitcher.converter.feature.procedure.PostgreSqlProcedureConverter
 import com.sqlswitcher.converter.feature.procedure.MySqlProcedureConverter
+import com.sqlswitcher.converter.feature.procedure.TriggerConversionService
 import org.springframework.stereotype.Service
 
 /**
- * STORED PROCEDURE / FUNCTION 변환 서비스
+ * STORED PROCEDURE / FUNCTION / TRIGGER 변환 서비스
  *
  * 데이터베이스별 프로시저 문법:
  * - Oracle: PL/SQL (CREATE PROCEDURE ... IS ... BEGIN ... EXCEPTION ... END)
  * - PostgreSQL: PL/pgSQL (CREATE FUNCTION ... AS $$ ... $$ LANGUAGE plpgsql)
  * - MySQL: CREATE PROCEDURE ... BEGIN ... END
  *
+ * 트리거 변환:
+ * - Oracle: :NEW, :OLD, FOR EACH ROW
+ * - PostgreSQL: 트리거 함수 분리, EXECUTE FUNCTION
+ * - MySQL: NEW, OLD, DELIMITER
+ *
  * 실제 변환 로직은 각 DB별 컨버터 클래스에 위임:
  * - OracleProcedureConverter: Oracle PL/SQL 변환
  * - PostgreSqlProcedureConverter: PostgreSQL PL/pgSQL 변환
  * - MySqlProcedureConverter: MySQL 프로시저 변환
+ * - TriggerConversionService: 트리거 변환
  */
 @Service
 class ProcedureConversionService(
     private val dataTypeService: DataTypeConversionService,
-    private val functionService: FunctionConversionService
+    private val functionService: FunctionConversionService,
+    private val triggerService: TriggerConversionService
 ) {
 
     /**
@@ -91,5 +99,25 @@ class ProcedureConversionService(
             DialectType.POSTGRESQL -> MySqlProcedureConverter.convertToPostgreSql(sql, warnings, appliedRules)
             else -> sql
         }
+    }
+
+    /**
+     * TRIGGER 변환
+     */
+    fun convertTrigger(
+        sql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        return triggerService.convertTrigger(sql, sourceDialect, targetDialect, warnings, appliedRules)
+    }
+
+    /**
+     * 트리거 문인지 확인
+     */
+    fun isTriggerStatement(sql: String): Boolean {
+        return triggerService.isTriggerStatement(sql)
     }
 }

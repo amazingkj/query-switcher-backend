@@ -23,13 +23,19 @@ object SqlRegexPatterns {
     /** LOB 저장소 (SECUREFILE/BASICFILE) 패턴 */
     val LOB_STORAGE = Regex("""\s+(SECUREFILE|BASICFILE)\s+""", RegexOption.IGNORE_CASE)
 
-    /** TABLESPACE 패턴 */
-    val TABLESPACE = Regex("""\s+TABLESPACE\s+\w+""", RegexOption.IGNORE_CASE)
+    /** TABLESPACE 패턴 (따옴표 포함 가능) */
+    val TABLESPACE = Regex("""\s*TABLESPACE\s+["']?\w+["']?""", RegexOption.IGNORE_CASE)
 
     /** STORAGE 절 패턴 */
     val STORAGE_CLAUSE = Regex("""\s*STORAGE\s*\([\s\S]*?\)""", RegexOption.IGNORE_CASE)
 
-    /** 물리적 옵션 라인 패턴 (PCTFREE, PCTUSED 등) */
+    /** 물리적 옵션 개별 패턴 (인라인 사용) */
+    val PCTFREE = Regex("""\s*PCTFREE\s+\d+""", RegexOption.IGNORE_CASE)
+    val PCTUSED = Regex("""\s*PCTUSED\s+\d+""", RegexOption.IGNORE_CASE)
+    val INITRANS = Regex("""\s*INITRANS\s+\d+""", RegexOption.IGNORE_CASE)
+    val MAXTRANS = Regex("""\s*MAXTRANS\s+\d+""", RegexOption.IGNORE_CASE)
+
+    /** 물리적 옵션 라인 패턴 (PCTFREE, PCTUSED 등) - 레거시 호환 */
     val PHYSICAL_OPTIONS_LINE = Regex(
         """^\s*(PCTFREE|PCTUSED|INITRANS|MAXTRANS|LOGGING|NOLOGGING)(\s+\d+)?\s*$""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
@@ -38,10 +44,37 @@ object SqlRegexPatterns {
     /** 제약조건 상태 패턴 (ENABLE/DISABLE) */
     val CONSTRAINT_STATE = Regex("""\s+(ENABLE|DISABLE)\s+(VALIDATE|NOVALIDATE)?""", RegexOption.IGNORE_CASE)
 
-    /** COMPRESS 라인 패턴 */
+    /** COMPRESS/NOCOMPRESS 개별 패턴 */
+    val COMPRESS = Regex("""\s*(NO)?COMPRESS(\s+\d+)?""", RegexOption.IGNORE_CASE)
+
+    /** COMPRESS 라인 패턴 - 레거시 호환 */
     val COMPRESS_LINE = Regex(
         """^\s*(COMPRESS|NOCOMPRESS)(\s+\d+)?\s*$""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)
+    )
+
+    /** LOGGING/NOLOGGING 개별 패턴 */
+    val LOGGING = Regex("""\s*(NO)?LOGGING\b""", RegexOption.IGNORE_CASE)
+
+    /** CACHE/NOCACHE 개별 패턴 */
+    val CACHE = Regex("""\s*(NO)?CACHE\b""", RegexOption.IGNORE_CASE)
+
+    /** MONITORING/NOMONITORING 개별 패턴 */
+    val MONITORING = Regex("""\s*(NO)?MONITORING\b""", RegexOption.IGNORE_CASE)
+
+    /** SEGMENT CREATION 패턴 */
+    val SEGMENT_CREATION = Regex("""\s*SEGMENT\s+CREATION\s+(IMMEDIATE|DEFERRED)""", RegexOption.IGNORE_CASE)
+
+    /** ROW MOVEMENT 패턴 */
+    val ROW_MOVEMENT = Regex("""\s*(ENABLE|DISABLE)\s+ROW\s+MOVEMENT""", RegexOption.IGNORE_CASE)
+
+    /** PARALLEL 옵션 패턴 */
+    val PARALLEL = Regex("""\s*(NO)?PARALLEL(\s+\d+)?""", RegexOption.IGNORE_CASE)
+
+    /** Oracle DDL 옵션 전체 블록 패턴 (닫는 괄호 뒤의 모든 Oracle 전용 옵션들) */
+    val ORACLE_DDL_OPTIONS_BLOCK = Regex(
+        """\)\s*(TABLESPACE\s+["']?\w+["']?|PCTFREE\s+\d+|PCTUSED\s+\d+|INITRANS\s+\d+|MAXTRANS\s+\d+|(NO)?LOGGING|(NO)?COMPRESS(\s+\d+)?|(NO)?CACHE|(NO)?MONITORING|SEGMENT\s+CREATION\s+(IMMEDIATE|DEFERRED)|(ENABLE|DISABLE)\s+ROW\s+MOVEMENT|(NO)?PARALLEL(\s+\d+)?|STORAGE\s*\([^)]*\)|\s)+""",
+        RegexOption.IGNORE_CASE
     )
 
     /** ROWNUM WHERE 절 패턴 */

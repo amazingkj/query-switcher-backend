@@ -2,8 +2,6 @@ import React from 'react';
 import { useUserBehaviorTracking } from '../hooks/useAnalytics';
 
 interface ConverterToolbarProps {
-  isAutoConvert: boolean;
-  onAutoConvertChange: (value: boolean) => void;
   onSwapDatabases: () => void;
   onOpenSnippetPanel: () => void;
   onOpenHistoryPanel: () => void;
@@ -16,8 +14,6 @@ interface ConverterToolbarProps {
  * 데이터베이스 선택 영역 아래의 툴바 버튼 컴포넌트
  */
 export const ConverterToolbar: React.FC<ConverterToolbarProps> = ({
-  isAutoConvert,
-  onAutoConvertChange,
   onSwapDatabases,
   onOpenSnippetPanel,
   onOpenHistoryPanel,
@@ -111,16 +107,6 @@ export const ConverterToolbar: React.FC<ConverterToolbarProps> = ({
         <span className="hidden sm:inline">분석</span>
       </button>
 
-      {/* 자동 변환 체크박스 */}
-      <label className="col-span-4 sm:col-span-1 flex items-center justify-center sm:justify-start px-3 py-2 sm:py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-gray-300 dark:hover:border-gray-500 transition-all duration-200">
-        <input
-          type="checkbox"
-          checked={isAutoConvert}
-          onChange={(e) => onAutoConvertChange(e.target.checked)}
-          className="w-3 h-3 text-blue-600 border border-gray-300 dark:border-gray-500 rounded focus:ring-1 focus:ring-blue-500 mr-2"
-        />
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">자동 변환</span>
-      </label>
     </div>
   );
 };

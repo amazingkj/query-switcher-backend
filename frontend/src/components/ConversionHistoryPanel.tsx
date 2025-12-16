@@ -79,7 +79,7 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
           <div className="flex gap-2">
             <button
               onClick={clearHistory}
-              className="px-4 py-2 text-sm font-medium bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:bg-red-700 transition-all duration-200"
+              className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:bg-red-700 transition-all duration-200"
             >
               전체 삭제
             </button>
@@ -167,13 +167,13 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                   <div>
                     <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">원본 SQL</h4>
-                    <pre className="text-xs bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded border dark:border-gray-700 overflow-x-auto">
+                    <pre className="text-xs bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-300 p-2 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
                       <code>{truncateSql(item.originalSql)}</code>
                     </pre>
                   </div>
                   <div>
                     <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">변환된 SQL</h4>
-                    <pre className="text-xs bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded border dark:border-gray-700 overflow-x-auto">
+                    <pre className="text-xs bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-300 p-2 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
                       <code>{truncateSql(item.convertedSql)}</code>
                     </pre>
                   </div>
@@ -190,7 +190,7 @@ export const ConversionHistoryPanel: React.FC<ConversionHistoryPanelProps> = ({
                   </div>
                   <button
                     onClick={() => handleSelectHistory(item)}
-                    className="px-4 py-2 text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:bg-blue-700 transition-all duration-200"
+                    className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:bg-blue-700 transition-all duration-200"
                   >
                     선택
                   </button>

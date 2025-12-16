@@ -1,6 +1,6 @@
 import { useRef, useCallback } from 'react';
 import { useSqlStore } from '../stores/sqlStore';
-import { useSqlConvert, useRealtimeConvert } from './useSqlConvert';
+import { useSqlConvert } from './useSqlConvert';
 import { useConversionHistory } from './useConversionHistory';
 import { useConversionTracking, useUserBehaviorTracking } from './useAnalytics';
 import { SQL_LIMITS, DEFAULT_CONVERSION_OPTIONS } from '../config/sqlLimits';
@@ -27,7 +27,6 @@ export function useSqlConverterHandlers() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const convertMutation = useSqlConvert();
-  const realtimeConvertMutation = useRealtimeConvert();
   const { addConversion } = useConversionHistory();
   const { trackSqlConversion } = useConversionTracking();
   const { trackButtonClick, trackFeatureUse } = useUserBehaviorTracking();
@@ -91,20 +90,6 @@ export function useSqlConverterHandlers() {
       }
     });
   }, [inputSql, sourceDialect, targetDialect, createConversionRequest, convertMutation, addConversion, trackSqlConversion]);
-
-  /**
-   * 실시간 변환 핸들러
-   */
-  const handleRealtimeConvert = useCallback(() => {
-    if (!inputSql.trim()) return;
-
-    const request = createConversionRequest();
-    realtimeConvertMutation.mutate(request, {
-      onSuccess: (data) => {
-        addConversion(data);
-      }
-    });
-  }, [inputSql, createConversionRequest, realtimeConvertMutation, addConversion]);
 
   /**
    * 결과 복사 핸들러
@@ -219,7 +204,6 @@ export function useSqlConverterHandlers() {
   return {
     fileInputRef,
     handleConvert,
-    handleRealtimeConvert,
     handleCopyResult,
     handleSwapDatabases,
     handleSnippetSelect,
@@ -227,6 +211,6 @@ export function useSqlConverterHandlers() {
     handleFileUpload,
     handleDownload,
     triggerFileUpload,
-    isConverting: convertMutation.isPending || realtimeConvertMutation.isPending
+    isConverting: convertMutation.isPending
   };
 }

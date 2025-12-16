@@ -1,6 +1,8 @@
 package com.sqlswitcher.converter.feature.function
 
 import com.sqlswitcher.converter.DialectType
+import com.sqlswitcher.converter.registry.DynamicReplacementRule
+import com.sqlswitcher.converter.registry.DynamicReplacementRegistry
 
 /**
  * 페이징 구문 변환
@@ -8,18 +10,53 @@ import com.sqlswitcher.converter.DialectType
  */
 object PaginationConverter {
 
-    private val OFFSET_FETCH_PATTERN = Regex(
-        """OFFSET\s+(\d+)\s+ROWS?\s+FETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY""",
-        RegexOption.IGNORE_CASE
-    )
-    private val LIMIT_OFFSET_PATTERN = Regex(
-        """LIMIT\s+(\d+)\s+OFFSET\s+(\d+)""",
-        RegexOption.IGNORE_CASE
-    )
-    private val LIMIT_ONLY_PATTERN = Regex(
-        """LIMIT\s+(\d+)(?!\s+OFFSET)""",
-        RegexOption.IGNORE_CASE
-    )
+    // 페이징 변환 레지스트리
+    private val paginationRegistry = DynamicReplacementRegistry().apply {
+        // Oracle → MySQL/PostgreSQL: OFFSET FETCH → LIMIT OFFSET
+        registerAll(DialectType.ORACLE, DialectType.MYSQL, listOf(
+            DynamicReplacementRule(
+                """OFFSET\s+(\d+)\s+ROWS?\s+FETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY""",
+                { match -> "LIMIT ${match.groupValues[2]} OFFSET ${match.groupValues[1]}" },
+                "OFFSET ... FETCH → LIMIT ... OFFSET 변환"
+            )
+        ))
+
+        registerAll(DialectType.ORACLE, DialectType.POSTGRESQL, listOf(
+            DynamicReplacementRule(
+                """OFFSET\s+(\d+)\s+ROWS?\s+FETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY""",
+                { match -> "LIMIT ${match.groupValues[2]} OFFSET ${match.groupValues[1]}" },
+                "OFFSET ... FETCH → LIMIT ... OFFSET 변환"
+            )
+        ))
+
+        // MySQL → Oracle: LIMIT OFFSET → OFFSET FETCH
+        registerAll(DialectType.MYSQL, DialectType.ORACLE, listOf(
+            DynamicReplacementRule(
+                """LIMIT\s+(\d+)\s+OFFSET\s+(\d+)""",
+                { match -> "OFFSET ${match.groupValues[2]} ROWS FETCH NEXT ${match.groupValues[1]} ROWS ONLY" },
+                "LIMIT ... OFFSET → OFFSET ... FETCH 변환"
+            ),
+            DynamicReplacementRule(
+                """LIMIT\s+(\d+)(?!\s+OFFSET)""",
+                { match -> "FETCH FIRST ${match.groupValues[1]} ROWS ONLY" },
+                "LIMIT → FETCH FIRST 변환"
+            )
+        ))
+
+        // PostgreSQL → Oracle: LIMIT OFFSET → OFFSET FETCH
+        registerAll(DialectType.POSTGRESQL, DialectType.ORACLE, listOf(
+            DynamicReplacementRule(
+                """LIMIT\s+(\d+)\s+OFFSET\s+(\d+)""",
+                { match -> "OFFSET ${match.groupValues[2]} ROWS FETCH NEXT ${match.groupValues[1]} ROWS ONLY" },
+                "LIMIT ... OFFSET → OFFSET ... FETCH 변환"
+            ),
+            DynamicReplacementRule(
+                """LIMIT\s+(\d+)(?!\s+OFFSET)""",
+                { match -> "FETCH FIRST ${match.groupValues[1]} ROWS ONLY" },
+                "LIMIT → FETCH FIRST 변환"
+            )
+        ))
+    }
 
     fun convert(
         sql: String,
@@ -27,43 +64,6 @@ object PaginationConverter {
         targetDialect: DialectType,
         appliedRules: MutableList<String>
     ): String {
-        var result = sql
-
-        // Oracle 12c OFFSET FETCH → MySQL/PostgreSQL LIMIT OFFSET
-        if (sourceDialect == DialectType.ORACLE && OFFSET_FETCH_PATTERN.containsMatchIn(result)) {
-            result = OFFSET_FETCH_PATTERN.replace(result) { match ->
-                val offset = match.groupValues[1]
-                val limit = match.groupValues[2]
-                when (targetDialect) {
-                    DialectType.MYSQL, DialectType.POSTGRESQL -> {
-                        appliedRules.add("OFFSET ... FETCH → LIMIT ... OFFSET 변환")
-                        "LIMIT $limit OFFSET $offset"
-                    }
-                    else -> match.value
-                }
-            }
-        }
-
-        // MySQL/PostgreSQL LIMIT OFFSET → Oracle OFFSET FETCH
-        if ((sourceDialect == DialectType.MYSQL || sourceDialect == DialectType.POSTGRESQL)
-            && targetDialect == DialectType.ORACLE) {
-
-            if (LIMIT_OFFSET_PATTERN.containsMatchIn(result)) {
-                result = LIMIT_OFFSET_PATTERN.replace(result) { match ->
-                    val limit = match.groupValues[1]
-                    val offset = match.groupValues[2]
-                    appliedRules.add("LIMIT ... OFFSET → OFFSET ... FETCH 변환")
-                    "OFFSET $offset ROWS FETCH NEXT $limit ROWS ONLY"
-                }
-            } else if (LIMIT_ONLY_PATTERN.containsMatchIn(result)) {
-                result = LIMIT_ONLY_PATTERN.replace(result) { match ->
-                    val limit = match.groupValues[1]
-                    appliedRules.add("LIMIT → FETCH FIRST 변환")
-                    "FETCH FIRST $limit ROWS ONLY"
-                }
-            }
-        }
-
-        return result
+        return paginationRegistry.apply(sql, sourceDialect, targetDialect, appliedRules)
     }
 }

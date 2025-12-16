@@ -21,7 +21,6 @@ interface SqlState {
 
   // UI 상태
   isLoading: boolean;
-  isAutoConvert: boolean;
   isPrettyFormat: boolean;  // 포맷팅 설정
 
   // 액션
@@ -34,7 +33,6 @@ interface SqlState {
   setError: (error: ApiError | ConversionApiError | null) => void;
   clearError: () => void;
   setLoading: (loading: boolean) => void;
-  setAutoConvert: (auto: boolean) => void;
   setPrettyFormat: (pretty: boolean) => void;
   clearResults: () => void;
 }
@@ -51,7 +49,6 @@ export const useSqlStore = create<SqlState>()(
       warnings: [],
       error: null,
       isLoading: false,
-      isAutoConvert: false,
       isPrettyFormat: true,  // 기본값: 포맷팅 활성화
 
       // 액션들
@@ -64,7 +61,6 @@ export const useSqlStore = create<SqlState>()(
       setError: (error: ApiError | ConversionApiError | null) => set({ error }),
       clearError: () => set({ error: null }),
       setLoading: (loading: boolean) => set({ isLoading: loading }),
-      setAutoConvert: (auto: boolean) => set({ isAutoConvert: auto }),
       setPrettyFormat: (pretty: boolean) => set({ isPrettyFormat: pretty }),
 
       clearResults: () => set({
@@ -80,7 +76,6 @@ export const useSqlStore = create<SqlState>()(
         // 저장할 상태만 선택 (사용자 설정)
         sourceDialect: state.sourceDialect,
         targetDialect: state.targetDialect,
-        isAutoConvert: state.isAutoConvert,
         isPrettyFormat: state.isPrettyFormat,
       }),
     }
