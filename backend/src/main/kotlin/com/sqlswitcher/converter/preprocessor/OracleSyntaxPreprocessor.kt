@@ -21,9 +21,13 @@ import org.springframework.stereotype.Component
 class OracleSyntaxPreprocessor {
 
     private val processors: List<SyntaxProcessor> = listOf(
+        // 식별자 처리 (가장 먼저 실행)
+        QuotedIdentifierProcessor(),
+
         // 파티션/제약조건
         PartitionProcessor(),
         ConstraintStateProcessor(),
+        UsingIndexProcessor(),
         CommentOnProcessor(),
         SchemaTableProcessor(),
 
@@ -45,7 +49,8 @@ class OracleSyntaxPreprocessor {
         MonitoringProcessor(),
         DefaultFunctionProcessor(),
         FlashbackProcessor(),
-        RowMovementProcessor()
+        RowMovementProcessor(),
+        InMemoryProcessor()
     )
 
     /**
@@ -62,6 +67,11 @@ class OracleSyntaxPreprocessor {
         for (processor in processors) {
             result = processor.process(result, targetDialect, warnings, appliedRules)
         }
+
+        // 세미콜론만 있는 줄 제거 (빈 문장 정리)
+        result = result.lines()
+            .filterNot { line -> line.trim() == ";" }
+            .joinToString("\n")
 
         // 연속된 빈 줄 정리
         result = SqlRegexPatterns.MULTIPLE_BLANK_LINES.replace(result, "\n\n")

@@ -160,8 +160,15 @@ class SqlConverterEngine(
             )
         }
 
+        // 0.5. Oracle에서 다른 DB로 변환 시, 파싱 전에 Oracle DDL 옵션 전처리
+        val preprocessedSql = if (sourceDialectType == DialectType.ORACLE && targetDialectType != DialectType.ORACLE) {
+            oracleSyntaxPreprocessor.preprocess(sql, targetDialectType, warnings, appliedRules)
+        } else {
+            sql
+        }
+
         // 1. SQL 파싱 및 AST 분석
-        val parseResult = sqlParserService.parseSql(sql)
+        val parseResult = sqlParserService.parseSql(preprocessedSql)
         if (parseResult.parseException != null) {
             // 파싱 실패 시 문자열 기반 폴백 변환 시도
             warnings.add(createWarning(
