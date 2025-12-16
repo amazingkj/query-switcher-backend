@@ -67,6 +67,37 @@ class ConstraintStateProcessor : SyntaxProcessor {
 }
 
 /**
+ * USING INDEX 절 제거 (Oracle 전용)
+ * PRIMARY KEY (...) USING INDEX ... → PRIMARY KEY (...)
+ */
+class UsingIndexProcessor : SyntaxProcessor {
+    // USING INDEX 절 패턴 (인덱스명, 테이블스페이스 등 포함)
+    private val usingIndexPattern = Regex(
+        """\s+USING\s+INDEX\s+[^\s,;)]+(\s*\([^)]*\))?(\s+TABLESPACE\s+[^\s,;)]+)?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    override fun process(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (!sql.uppercase().contains("USING INDEX")) {
+            return sql
+        }
+
+        val result = usingIndexPattern.replace(sql, "")
+
+        if (result != sql) {
+            appliedRules.add("USING INDEX 절 제거")
+        }
+
+        return result
+    }
+}
+
+/**
  * COMMENT ON 구문 처리 (Oracle → MySQL)
  */
 class CommentOnProcessor : SyntaxProcessor {
