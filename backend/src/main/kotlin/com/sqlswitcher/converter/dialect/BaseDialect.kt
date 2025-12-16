@@ -10,7 +10,7 @@ import com.sqlswitcher.converter.feature.FunctionConversionService
 import com.sqlswitcher.converter.feature.DataTypeConversionService
 import com.sqlswitcher.converter.feature.DDLConversionService
 import com.sqlswitcher.converter.feature.SelectConversionService
-import com.sqlswitcher.converter.feature.TriggerConversionService
+import com.sqlswitcher.converter.feature.procedure.TriggerConversionService
 import com.sqlswitcher.converter.feature.SequenceConversionService
 import com.sqlswitcher.converter.feature.PartitionConversionService
 import com.sqlswitcher.converter.feature.ViewConversionService

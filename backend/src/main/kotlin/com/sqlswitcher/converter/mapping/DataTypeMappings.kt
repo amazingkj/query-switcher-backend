@@ -50,6 +50,7 @@ class DataTypeMappingRegistry {
         val rules = listOf(
             // 숫자형
             DataTypeMappingRule(DialectType.ORACLE, DialectType.MYSQL, "NUMBER", "DECIMAL", PrecisionHandler.PRESERVE),
+            DataTypeMappingRule(DialectType.ORACLE, DialectType.MYSQL, "FLOAT", "DOUBLE", PrecisionHandler.DROP),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.MYSQL, "BINARY_FLOAT", "FLOAT"),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.MYSQL, "BINARY_DOUBLE", "DOUBLE"),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.MYSQL, "INTEGER", "INT"),
@@ -74,6 +75,7 @@ class DataTypeMappingRegistry {
         val rules = listOf(
             // 숫자형
             DataTypeMappingRule(DialectType.ORACLE, DialectType.POSTGRESQL, "NUMBER", "NUMERIC", PrecisionHandler.PRESERVE),
+            DataTypeMappingRule(DialectType.ORACLE, DialectType.POSTGRESQL, "FLOAT", "DOUBLE PRECISION", PrecisionHandler.DROP),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.POSTGRESQL, "BINARY_FLOAT", "REAL"),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.POSTGRESQL, "BINARY_DOUBLE", "DOUBLE PRECISION"),
             DataTypeMappingRule(DialectType.ORACLE, DialectType.POSTGRESQL, "INTEGER", "INTEGER"),

@@ -21,6 +21,9 @@ import org.springframework.stereotype.Component
 class OracleSyntaxPreprocessor {
 
     private val processors: List<SyntaxProcessor> = listOf(
+        // 식별자 처리 (가장 먼저 실행)
+        QuotedIdentifierProcessor(),
+
         // 파티션/제약조건
         PartitionProcessor(),
         ConstraintStateProcessor(),
@@ -45,7 +48,8 @@ class OracleSyntaxPreprocessor {
         MonitoringProcessor(),
         DefaultFunctionProcessor(),
         FlashbackProcessor(),
-        RowMovementProcessor()
+        RowMovementProcessor(),
+        InMemoryProcessor()
     )
 
     /**
