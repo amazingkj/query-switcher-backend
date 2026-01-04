@@ -13,11 +13,50 @@ import org.springframework.stereotype.Service
  * - Oracle: MERGE INTO ... USING ... WHEN MATCHED/NOT MATCHED
  * - PostgreSQL: INSERT ... ON CONFLICT ... DO UPDATE/NOTHING
  * - MySQL: INSERT ... ON DUPLICATE KEY UPDATE / REPLACE INTO
+ *
+ * 지원 기능:
+ * - WHEN MATCHED THEN UPDATE
+ * - WHEN MATCHED THEN DELETE (Oracle 10g+)
+ * - WHEN NOT MATCHED THEN INSERT
+ * - USING (SELECT ...) 서브쿼리
+ * - USING DUAL (단일 행 UPSERT)
+ * - 다중 ON 조건
  */
 @Service
 class MergeConversionService(
-    private val functionService: FunctionConversionService
+    @Suppress("UNUSED_PARAMETER") private val functionService: FunctionConversionService
 ) {
+
+    // MERGE 패턴들
+    private val MERGE_INTO_PATTERN = Regex(
+        """MERGE\s+INTO\s+(\S+)\s+(?:(\w+)\s+)?USING\s+(.+?)\s+ON\s+\((.+?)\)(.*)""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private val USING_DUAL_PATTERN = Regex(
+        """USING\s+DUAL\s+ON""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val USING_SELECT_PATTERN = Regex(
+        """USING\s*\(\s*SELECT\s+(.+?)\s+FROM\s+(.+?)\s*\)\s*(\w*)\s*ON""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private val WHEN_MATCHED_UPDATE_PATTERN = Regex(
+        """WHEN\s+MATCHED\s+THEN\s+UPDATE\s+SET\s+(.+?)(?=WHEN|DELETE|$)""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private val WHEN_MATCHED_DELETE_PATTERN = Regex(
+        """WHEN\s+MATCHED\s+(?:AND\s+(.+?)\s+)?THEN\s+DELETE""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val WHEN_NOT_MATCHED_PATTERN = Regex(
+        """WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*\((.+?)\)\s*VALUES\s*\((.+?)\)""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
 
     /**
      * MERGE 문 변환 (Oracle 스타일 → 타겟 방언)
@@ -268,71 +307,114 @@ class MergeConversionService(
     }
 
     /**
-     * Oracle MERGE 구문 파싱
+     * Oracle MERGE 구문 파싱 (강화된 버전)
      */
     private fun parseOracleMerge(sql: String): MergeParseResult? {
-        // 간단한 MERGE 구문만 파싱 시도
-        val mergePattern = Regex(
-            """MERGE\s+INTO\s+(\S+)\s+(?:(\w+)\s+)?USING\s+(.+?)\s+ON\s+\((.+?)\)(.*)""",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-        )
+        val match = MERGE_INTO_PATTERN.find(sql) ?: return null
 
-        val match = mergePattern.find(sql) ?: return null
-
-        val targetTable = match.groupValues[1]
+        val targetTable = match.groupValues[1].replace("\"", "")
         val targetAlias = match.groupValues[2].ifEmpty { null }
         val sourceExpr = match.groupValues[3].trim()
         val onCondition = match.groupValues[4].trim()
         val clauses = match.groupValues[5].trim()
 
-        // WHEN MATCHED/NOT MATCHED 절 파싱
-        val whenMatchedPattern = Regex(
-            """WHEN\s+MATCHED\s+THEN\s+UPDATE\s+SET\s+(.+?)(?=WHEN|$)""",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-        )
-        val whenNotMatchedPattern = Regex(
-            """WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*\((.+?)\)\s*VALUES\s*\((.+?)\)""",
-            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-        )
+        // USING DUAL 여부 확인
+        val usingDual = USING_DUAL_PATTERN.containsMatchIn(sql)
 
-        val matchedMatch = whenMatchedPattern.find(clauses)
-        val notMatchedMatch = whenNotMatchedPattern.find(clauses)
+        // USING (SELECT ...) 서브쿼리 파싱
+        val selectMatch = USING_SELECT_PATTERN.find(sql)
+        val sourceSelect = if (selectMatch != null) {
+            SourceSelectInfo(
+                columns = selectMatch.groupValues[1].trim(),
+                fromClause = selectMatch.groupValues[2].trim(),
+                alias = selectMatch.groupValues[3].ifEmpty { "src" }
+            )
+        } else null
+
+        // WHEN MATCHED THEN UPDATE
+        val matchedUpdateMatch = WHEN_MATCHED_UPDATE_PATTERN.find(clauses)
+        val updateSet = matchedUpdateMatch?.groupValues?.get(1)?.trim()?.trimEnd(';')
+
+        // WHEN MATCHED THEN DELETE
+        val matchedDeleteMatch = WHEN_MATCHED_DELETE_PATTERN.find(clauses)
+        val deleteCondition = matchedDeleteMatch?.groupValues?.get(1)?.trim()
+        val hasDelete = matchedDeleteMatch != null
+
+        // WHEN NOT MATCHED THEN INSERT
+        val notMatchedMatch = WHEN_NOT_MATCHED_PATTERN.find(clauses)
+        val insertColumns = notMatchedMatch?.groupValues?.get(1)?.trim()
+        val insertValues = notMatchedMatch?.groupValues?.get(2)?.trim()
 
         return MergeParseResult(
             targetTable = targetTable,
             targetAlias = targetAlias,
             sourceExpression = sourceExpr,
             onCondition = onCondition,
-            updateSet = matchedMatch?.groupValues?.get(1)?.trim(),
-            insertColumns = notMatchedMatch?.groupValues?.get(1)?.trim(),
-            insertValues = notMatchedMatch?.groupValues?.get(2)?.trim()
+            updateSet = updateSet,
+            insertColumns = insertColumns,
+            insertValues = insertValues,
+            usingDual = usingDual,
+            sourceSelect = sourceSelect,
+            hasDelete = hasDelete,
+            deleteCondition = deleteCondition
         )
     }
 
     /**
-     * PostgreSQL INSERT ON CONFLICT 구문 생성
+     * USING (SELECT ...) 정보
+     */
+    data class SourceSelectInfo(
+        val columns: String,
+        val fromClause: String,
+        val alias: String
+    )
+
+    /**
+     * PostgreSQL INSERT ON CONFLICT 구문 생성 (강화됨)
      */
     private fun buildPostgreSqlUpsert(
         parsed: MergeParseResult,
         warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>
     ): String {
+        // USING DUAL 케이스
+        if (parsed.usingDual) {
+            return buildPostgreSqlUpsertFromDual(parsed, warnings, appliedRules)
+        }
+
         val sb = StringBuilder()
 
         if (parsed.insertColumns != null && parsed.insertValues != null) {
             sb.append("INSERT INTO ${parsed.targetTable} (${parsed.insertColumns})\n")
-            sb.append("VALUES (${parsed.insertValues})\n")
 
-            // ON CONFLICT 절 - ON 조건에서 컬럼 추출 시도
+            // USING (SELECT ...) 케이스
+            if (parsed.sourceSelect != null) {
+                sb.append("SELECT ${parsed.sourceSelect.columns} FROM ${parsed.sourceSelect.fromClause}\n")
+                appliedRules.add("MERGE USING (SELECT...) → INSERT ... SELECT 변환")
+            } else {
+                sb.append("VALUES (${parsed.insertValues})\n")
+            }
+
             val conflictColumn = extractConflictColumn(parsed.onCondition)
             sb.append("ON CONFLICT ($conflictColumn) DO ")
 
             if (parsed.updateSet != null) {
-                sb.append("UPDATE SET ${parsed.updateSet}")
+                val pgUpdateSet = convertToExcludedReference(parsed.updateSet)
+                sb.append("UPDATE SET $pgUpdateSet")
                 appliedRules.add("MERGE → INSERT ON CONFLICT DO UPDATE 변환")
             } else {
                 sb.append("NOTHING")
                 appliedRules.add("MERGE → INSERT ON CONFLICT DO NOTHING 변환")
+            }
+
+            // DELETE 경고
+            if (parsed.hasDelete) {
+                warnings.add(ConversionWarning(
+                    WarningType.PARTIAL_SUPPORT,
+                    "WHEN MATCHED THEN DELETE는 PostgreSQL ON CONFLICT에서 직접 지원되지 않습니다.",
+                    WarningSeverity.WARNING,
+                    "DELETE 작업을 별도 쿼리로 분리하세요: DELETE FROM ${parsed.targetTable} WHERE ${parsed.deleteCondition ?: "조건"}"
+                ))
             }
         } else {
             warnings.add(ConversionWarning(
@@ -347,27 +429,45 @@ class MergeConversionService(
     }
 
     /**
-     * MySQL INSERT ON DUPLICATE KEY UPDATE 구문 생성
+     * MySQL INSERT ON DUPLICATE KEY UPDATE 구문 생성 (강화됨)
      */
     private fun buildMySqlUpsert(
         parsed: MergeParseResult,
         warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>
     ): String {
+        // USING DUAL 케이스
+        if (parsed.usingDual) {
+            return buildMySqlUpsertFromDual(parsed, warnings, appliedRules)
+        }
+
         val sb = StringBuilder()
 
         if (parsed.insertColumns != null && parsed.insertValues != null) {
             sb.append("INSERT INTO ${parsed.targetTable} (${parsed.insertColumns})\n")
-            sb.append("VALUES (${parsed.insertValues})")
+
+            // USING (SELECT ...) 케이스
+            if (parsed.sourceSelect != null) {
+                sb.append("SELECT ${parsed.sourceSelect.columns} FROM ${parsed.sourceSelect.fromClause}")
+                appliedRules.add("MERGE USING (SELECT...) → INSERT ... SELECT 변환")
+            } else {
+                sb.append("VALUES (${parsed.insertValues})")
+            }
 
             if (parsed.updateSet != null) {
-                // VALUES(col) 형식으로 변환
-                val mysqlUpdateSet = parsed.updateSet.replace(
-                    Regex("""(\w+)\s*=\s*\w+\.(\w+)""")
-                ) { m -> "${m.groupValues[1]} = VALUES(${m.groupValues[2]})" }
-
+                val mysqlUpdateSet = convertToValuesReference(parsed.updateSet)
                 sb.append("\nON DUPLICATE KEY UPDATE $mysqlUpdateSet")
                 appliedRules.add("MERGE → INSERT ON DUPLICATE KEY UPDATE 변환")
+            }
+
+            // DELETE 경고
+            if (parsed.hasDelete) {
+                warnings.add(ConversionWarning(
+                    WarningType.PARTIAL_SUPPORT,
+                    "WHEN MATCHED THEN DELETE는 MySQL ON DUPLICATE KEY에서 지원되지 않습니다.",
+                    WarningSeverity.WARNING,
+                    "DELETE 작업을 별도 쿼리로 분리하세요: DELETE FROM ${parsed.targetTable} WHERE ${parsed.deleteCondition ?: "조건"}"
+                ))
             }
         } else {
             warnings.add(ConversionWarning(
@@ -392,7 +492,7 @@ class MergeConversionService(
     }
 
     /**
-     * MERGE 파싱 결과
+     * MERGE 파싱 결과 (확장됨)
      */
     data class MergeParseResult(
         val targetTable: String,
@@ -401,6 +501,120 @@ class MergeConversionService(
         val onCondition: String,
         val updateSet: String?,
         val insertColumns: String?,
-        val insertValues: String?
+        val insertValues: String?,
+        val usingDual: Boolean = false,
+        val sourceSelect: SourceSelectInfo? = null,
+        val hasDelete: Boolean = false,
+        val deleteCondition: String? = null
     )
+
+    /**
+     * USING DUAL → 단일 값 INSERT 변환 (PostgreSQL)
+     */
+    private fun buildPostgreSqlUpsertFromDual(
+        parsed: MergeParseResult,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val sb = StringBuilder()
+
+        if (parsed.insertColumns != null && parsed.insertValues != null) {
+            sb.append("INSERT INTO ${parsed.targetTable} (${parsed.insertColumns})\n")
+            sb.append("VALUES (${parsed.insertValues})\n")
+
+            val conflictColumn = extractConflictColumn(parsed.onCondition)
+            sb.append("ON CONFLICT ($conflictColumn) DO ")
+
+            if (parsed.updateSet != null) {
+                // 소스 별칭 참조를 EXCLUDED로 변환
+                val pgUpdateSet = convertToExcludedReference(parsed.updateSet)
+                sb.append("UPDATE SET $pgUpdateSet")
+                appliedRules.add("MERGE USING DUAL → INSERT ON CONFLICT DO UPDATE 변환")
+            } else {
+                sb.append("NOTHING")
+                appliedRules.add("MERGE USING DUAL → INSERT ON CONFLICT DO NOTHING 변환")
+            }
+
+            if (parsed.hasDelete) {
+                warnings.add(ConversionWarning(
+                    WarningType.PARTIAL_SUPPORT,
+                    "WHEN MATCHED THEN DELETE는 PostgreSQL ON CONFLICT에서 직접 지원되지 않습니다.",
+                    WarningSeverity.WARNING,
+                    "DELETE 작업은 별도 쿼리로 분리하거나 트리거를 사용하세요."
+                ))
+            }
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * USING DUAL → 단일 값 INSERT 변환 (MySQL)
+     */
+    private fun buildMySqlUpsertFromDual(
+        parsed: MergeParseResult,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        val sb = StringBuilder()
+
+        if (parsed.insertColumns != null && parsed.insertValues != null) {
+            sb.append("INSERT INTO ${parsed.targetTable} (${parsed.insertColumns})\n")
+            sb.append("VALUES (${parsed.insertValues})")
+
+            if (parsed.updateSet != null) {
+                val mysqlUpdateSet = convertToValuesReference(parsed.updateSet)
+                sb.append("\nON DUPLICATE KEY UPDATE $mysqlUpdateSet")
+                appliedRules.add("MERGE USING DUAL → INSERT ON DUPLICATE KEY UPDATE 변환")
+            }
+
+            if (parsed.hasDelete) {
+                warnings.add(ConversionWarning(
+                    WarningType.PARTIAL_SUPPORT,
+                    "WHEN MATCHED THEN DELETE는 MySQL ON DUPLICATE KEY에서 지원되지 않습니다.",
+                    WarningSeverity.WARNING,
+                    "DELETE 작업은 별도 쿼리로 분리하세요."
+                ))
+            }
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * 소스 별칭 참조를 EXCLUDED 참조로 변환 (PostgreSQL)
+     * src.col → EXCLUDED.col
+     */
+    private fun convertToExcludedReference(updateSet: String): String {
+        return updateSet.replace(
+            Regex("""(\w+)\.(\w+)""")
+        ) { match ->
+            val alias = match.groupValues[1]
+            val column = match.groupValues[2]
+            // 소스 테이블 별칭이면 EXCLUDED로 변환
+            if (alias.lowercase() in listOf("src", "s", "source", "new", "n")) {
+                "EXCLUDED.$column"
+            } else {
+                match.value
+            }
+        }
+    }
+
+    /**
+     * 소스 별칭 참조를 VALUES() 참조로 변환 (MySQL)
+     * src.col → VALUES(col)
+     */
+    private fun convertToValuesReference(updateSet: String): String {
+        return updateSet.replace(
+            Regex("""(\w+)\.(\w+)""")
+        ) { match ->
+            val alias = match.groupValues[1]
+            val column = match.groupValues[2]
+            if (alias.lowercase() in listOf("src", "s", "source", "new", "n")) {
+                "VALUES($column)"
+            } else {
+                match.value
+            }
+        }
+    }
 }

@@ -6,9 +6,53 @@ import com.sqlswitcher.converter.WarningType
 import com.sqlswitcher.converter.WarningSeverity
 
 /**
- * Oracle PL/SQL 프로시저 변환
+ * Oracle PL/SQL 프로시저/함수 변환
+ *
+ * 지원 기능:
+ * - CREATE PROCEDURE / CREATE FUNCTION
+ * - CURSOR 선언 및 FOR LOOP
+ * - %TYPE, %ROWTYPE 변환
+ * - EXCEPTION 블록 처리
+ * - BULK COLLECT / FORALL 경고
+ * - RETURN 문 처리
  */
 object OracleProcedureConverter {
+
+    // 패턴 정의
+    private val CURSOR_PATTERN = Regex(
+        """CURSOR\s+(\w+)\s+IS\s+(.+?);""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private val FOR_CURSOR_LOOP_PATTERN = Regex(
+        """FOR\s+(\w+)\s+IN\s+(\w+)\s+LOOP""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val TYPE_REFERENCE_PATTERN = Regex(
+        """(\w+)\.(\w+)%TYPE""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val ROWTYPE_REFERENCE_PATTERN = Regex(
+        """(\w+)%ROWTYPE""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val BULK_COLLECT_PATTERN = Regex(
+        """BULK\s+COLLECT\s+INTO""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val FORALL_PATTERN = Regex(
+        """FORALL\s+\w+\s+IN""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val RETURN_VALUE_PATTERN = Regex(
+        """RETURN\s+(\w+);""",
+        RegexOption.IGNORE_CASE
+    )
 
     /**
      * Oracle → PostgreSQL 변환
@@ -19,6 +63,13 @@ object OracleProcedureConverter {
         appliedRules: MutableList<String>
     ): String {
         var result = sql
+
+        // 0. FUNCTION 변환 확인
+        val funcPattern = Regex(
+            """CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)(.+?)RETURN\s+(\w+)""",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        val isFunction = funcPattern.containsMatchIn(result)
 
         // 1. CREATE [OR REPLACE] PROCEDURE → CREATE OR REPLACE FUNCTION
         val procPattern = Regex(
@@ -32,20 +83,33 @@ object OracleProcedureConverter {
             appliedRules.add("PROCEDURE → FUNCTION 변환 (PostgreSQL)")
         }
 
+        // 1.5 FUNCTION RETURN 타입 처리
+        if (isFunction) {
+            result = result.replace(
+                Regex("""RETURN\s+(\w+)\s+(IS|AS)""", RegexOption.IGNORE_CASE)
+            ) { match ->
+                val returnType = ProcedureConversionUtils.convertDataTypeForProcedure(
+                    match.groupValues[1], DialectType.POSTGRESQL
+                )
+                "RETURNS $returnType AS"
+            }
+            appliedRules.add("FUNCTION RETURN 타입 변환")
+        }
+
         // 2. 파라미터 모드 변환 (param IN VARCHAR2 → param VARCHAR)
         result = ProcedureConversionUtils.convertOracleParameters(result, DialectType.POSTGRESQL, appliedRules)
 
         // 3. IS/AS → RETURNS VOID AS $$\nDECLARE
         val isAsPattern = Regex("""\)\s*(IS|AS)\s*""", RegexOption.IGNORE_CASE)
         if (isAsPattern.containsMatchIn(result)) {
-            result = isAsPattern.replace(result, ")\nRETURNS VOID AS \$\$\nDECLARE\n")
+            result = isAsPattern.replace(result) { ")\nRETURNS VOID AS \$\$\nDECLARE\n" }
             appliedRules.add("IS/AS → RETURNS VOID AS \$\$ DECLARE 변환")
         }
 
         // 4. END; → END; $$ LANGUAGE plpgsql;
         val endPattern = Regex("""END\s*;\s*$""", RegexOption.IGNORE_CASE)
         if (endPattern.containsMatchIn(result)) {
-            result = endPattern.replace(result, "END;\n\$\$ LANGUAGE plpgsql;")
+            result = endPattern.replace(result) { "END;\n\$\$ LANGUAGE plpgsql;" }
             appliedRules.add("END; → END; \$\$ LANGUAGE plpgsql; 추가")
         }
 
@@ -123,7 +187,7 @@ object OracleProcedureConverter {
     }
 
     /**
-     * Oracle 특유 구문 → PostgreSQL 변환
+     * Oracle 특유 구문 → PostgreSQL 변환 (강화됨)
      */
     private fun convertSyntaxToPostgreSql(
         sql: String,
@@ -146,11 +210,79 @@ object OracleProcedureConverter {
             appliedRules.add("DBMS_OUTPUT.PUT_LINE → RAISE NOTICE")
         }
 
+        // %TYPE 참조 변환 (PostgreSQL도 지원하지만 문법이 약간 다름)
+        if (TYPE_REFERENCE_PATTERN.containsMatchIn(result)) {
+            // PostgreSQL: table.column%TYPE 그대로 사용 가능
+            warnings.add(ConversionWarning(
+                WarningType.SYNTAX_DIFFERENCE,
+                "%TYPE 참조가 사용되었습니다. PostgreSQL에서도 지원됩니다.",
+                WarningSeverity.INFO,
+                "테이블/컬럼이 존재하는지 확인하세요."
+            ))
+        }
+
+        // %ROWTYPE 변환
+        if (ROWTYPE_REFERENCE_PATTERN.containsMatchIn(result)) {
+            // PostgreSQL: table%ROWTYPE 그대로 사용 가능
+            warnings.add(ConversionWarning(
+                WarningType.SYNTAX_DIFFERENCE,
+                "%ROWTYPE 참조가 사용되었습니다. PostgreSQL에서도 지원됩니다.",
+                WarningSeverity.INFO
+            ))
+        }
+
+        // CURSOR FOR LOOP → PostgreSQL 스타일
+        if (FOR_CURSOR_LOOP_PATTERN.containsMatchIn(result)) {
+            // PostgreSQL에서도 동일한 문법 지원
+            appliedRules.add("CURSOR FOR LOOP 유지 (PostgreSQL 호환)")
+        }
+
+        // BULK COLLECT 경고
+        if (BULK_COLLECT_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.PARTIAL_SUPPORT,
+                "BULK COLLECT는 PostgreSQL에서 배열로 변환해야 합니다.",
+                WarningSeverity.WARNING,
+                "SELECT ... INTO array_var 또는 ARRAY_AGG() 사용을 고려하세요."
+            ))
+            // BULK COLLECT INTO → INTO (배열)
+            result = result.replace(
+                Regex("""BULK\s+COLLECT\s+INTO""", RegexOption.IGNORE_CASE),
+                "INTO"
+            )
+            appliedRules.add("BULK COLLECT INTO → INTO 변환 (배열 확인 필요)")
+        }
+
+        // FORALL 경고
+        if (FORALL_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.UNSUPPORTED_FUNCTION,
+                "FORALL은 PostgreSQL에서 지원되지 않습니다.",
+                WarningSeverity.WARNING,
+                "일반 FOR LOOP 또는 INSERT ... SELECT로 대체하세요."
+            ))
+        }
+
+        // EXECUTE IMMEDIATE → EXECUTE
+        result = result.replace(
+            Regex("""EXECUTE\s+IMMEDIATE\s+""", RegexOption.IGNORE_CASE),
+            "EXECUTE "
+        )
+        if (sql.uppercase().contains("EXECUTE IMMEDIATE")) {
+            appliedRules.add("EXECUTE IMMEDIATE → EXECUTE")
+        }
+
+        // SYSDATE → CURRENT_TIMESTAMP
+        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+
+        // SYSTIMESTAMP → CURRENT_TIMESTAMP
+        result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "CURRENT_TIMESTAMP")
+
         return result
     }
 
     /**
-     * Oracle 특유 구문 → MySQL 변환
+     * Oracle 특유 구문 → MySQL 변환 (강화됨)
      */
     private fun convertSyntaxToMySql(
         sql: String,
@@ -177,6 +309,98 @@ object OracleProcedureConverter {
                 "SELECT ${match.groupValues[1]}; -- DEBUG OUTPUT"
             }
             appliedRules.add("DBMS_OUTPUT.PUT_LINE → SELECT (디버깅)")
+        }
+
+        // %TYPE 참조 → 직접 타입 지정 필요
+        if (TYPE_REFERENCE_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.UNSUPPORTED_FUNCTION,
+                "%TYPE 참조는 MySQL에서 지원되지 않습니다.",
+                WarningSeverity.WARNING,
+                "직접 데이터 타입을 지정하세요 (예: VARCHAR(100), INT 등)."
+            ))
+            // %TYPE을 주석으로 변환
+            result = TYPE_REFERENCE_PATTERN.replace(result) { match ->
+                "/* ${match.value} */ VARCHAR(255)"
+            }
+            appliedRules.add("%TYPE → 주석 + 기본타입 변환")
+        }
+
+        // %ROWTYPE → RECORD 미지원
+        if (ROWTYPE_REFERENCE_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.UNSUPPORTED_FUNCTION,
+                "%ROWTYPE은 MySQL에서 지원되지 않습니다.",
+                WarningSeverity.ERROR,
+                "개별 변수로 분리하거나 임시 테이블을 사용하세요."
+            ))
+        }
+
+        // CURSOR FOR LOOP → MySQL CURSOR + LOOP
+        if (FOR_CURSOR_LOOP_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.SYNTAX_DIFFERENCE,
+                "Oracle FOR ... IN cursor LOOP는 MySQL에서 다르게 구현해야 합니다.",
+                WarningSeverity.WARNING,
+                "DECLARE CURSOR, OPEN, FETCH, CLOSE 패턴으로 변환하세요."
+            ))
+            appliedRules.add("CURSOR FOR LOOP 수동 변환 필요")
+        }
+
+        // BULK COLLECT 미지원
+        if (BULK_COLLECT_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.UNSUPPORTED_FUNCTION,
+                "BULK COLLECT는 MySQL에서 지원되지 않습니다.",
+                WarningSeverity.ERROR,
+                "일반 SELECT INTO 또는 커서를 사용하세요."
+            ))
+        }
+
+        // FORALL 미지원
+        if (FORALL_PATTERN.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.UNSUPPORTED_FUNCTION,
+                "FORALL은 MySQL에서 지원되지 않습니다.",
+                WarningSeverity.ERROR,
+                "일반 LOOP 또는 INSERT ... SELECT로 대체하세요."
+            ))
+        }
+
+        // EXECUTE IMMEDIATE → PREPARE + EXECUTE
+        if (sql.uppercase().contains("EXECUTE IMMEDIATE")) {
+            warnings.add(ConversionWarning(
+                WarningType.SYNTAX_DIFFERENCE,
+                "EXECUTE IMMEDIATE는 MySQL PREPARE/EXECUTE로 변환해야 합니다.",
+                WarningSeverity.WARNING,
+                "PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt; 패턴을 사용하세요."
+            ))
+            result = result.replace(
+                Regex("""EXECUTE\s+IMMEDIATE\s+(.+?);""", RegexOption.IGNORE_CASE)
+            ) { match ->
+                val sqlVar = match.groupValues[1]
+                "SET @dynamic_sql = $sqlVar;\nPREPARE stmt FROM @dynamic_sql;\nEXECUTE stmt;\nDEALLOCATE PREPARE stmt;"
+            }
+            appliedRules.add("EXECUTE IMMEDIATE → PREPARE/EXECUTE")
+        }
+
+        // SYSDATE → NOW()
+        result = result.replace(Regex("\\bSYSDATE\\b", RegexOption.IGNORE_CASE), "NOW()")
+
+        // SYSTIMESTAMP → NOW(6)
+        result = result.replace(Regex("\\bSYSTIMESTAMP\\b", RegexOption.IGNORE_CASE), "NOW(6)")
+
+        // DECODE → CASE WHEN
+        val decodePattern = Regex(
+            """DECODE\s*\(\s*(\w+)\s*,\s*(.+?)\s*\)""",
+            RegexOption.IGNORE_CASE
+        )
+        if (decodePattern.containsMatchIn(result)) {
+            warnings.add(ConversionWarning(
+                WarningType.SYNTAX_DIFFERENCE,
+                "DECODE는 CASE WHEN으로 변환이 필요합니다.",
+                WarningSeverity.INFO
+            ))
         }
 
         return result
