@@ -1,6 +1,8 @@
 package com.sqlswitcher.converter.stringbased
 
 import com.sqlswitcher.converter.DialectType
+import com.sqlswitcher.converter.feature.function.DecodeConverter
+import com.sqlswitcher.converter.util.SqlParsingUtils
 import org.springframework.stereotype.Component
 
 /**
@@ -10,6 +12,71 @@ import org.springframework.stereotype.Component
  */
 @Component
 class StringBasedFunctionConverter {
+
+    // Oracle → MySQL 날짜 포맷 매핑
+    private val oracleToMySqlDateFormat = mapOf(
+        "YYYY" to "%Y",
+        "YY" to "%y",
+        "MM" to "%m",
+        "MON" to "%b",
+        "MONTH" to "%M",
+        "DD" to "%d",
+        "DY" to "%a",
+        "DAY" to "%W",
+        "HH24" to "%H",
+        "HH12" to "%h",
+        "HH" to "%h",
+        "MI" to "%i",
+        "SS" to "%s",
+        "AM" to "%p",
+        "PM" to "%p",
+        "D" to "%w",
+        "J" to "%j",
+        "WW" to "%U",
+        "IW" to "%V",
+        "Q" to "" // MySQL doesn't have quarter format
+    )
+
+    // MySQL → Oracle 날짜 포맷 매핑 (역방향)
+    private val mySqlToOracleDateFormat = mapOf(
+        "%Y" to "YYYY",
+        "%y" to "YY",
+        "%m" to "MM",
+        "%b" to "MON",
+        "%M" to "MONTH",
+        "%d" to "DD",
+        "%e" to "DD",
+        "%a" to "DY",
+        "%W" to "DAY",
+        "%H" to "HH24",
+        "%h" to "HH12",
+        "%i" to "MI",
+        "%s" to "SS",
+        "%p" to "AM",
+        "%w" to "D",
+        "%j" to "DDD",
+        "%U" to "WW",
+        "%V" to "IW"
+    )
+
+    // Oracle → PostgreSQL 날짜 포맷 매핑 (PostgreSQL도 Oracle 형식 대부분 지원)
+    private val oracleToPostgreSqlDateFormat = mapOf(
+        "YYYY" to "YYYY",
+        "YY" to "YY",
+        "MM" to "MM",
+        "MON" to "Mon",
+        "MONTH" to "Month",
+        "DD" to "DD",
+        "DY" to "Dy",
+        "DAY" to "Day",
+        "HH24" to "HH24",
+        "HH12" to "HH12",
+        "HH" to "HH12",
+        "MI" to "MI",
+        "SS" to "SS",
+        "AM" to "AM",
+        "PM" to "PM"
+    )
 
     private val converters: Map<DialectPair, List<FunctionReplacement>> = mapOf(
         // Oracle → MySQL
@@ -38,18 +105,17 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\bLISTAGG\\s*\\(", "GROUP_CONCAT("),
             // NULL 처리 함수
             FunctionReplacement("\\bNVL\\s*\\(", "IFNULL("),
-            FunctionReplacement("\\bNVL2\\s*\\(", "IF("),
+            // NVL2는 별도 처리 (DecodeConverter.convertNvl2ToCaseWhen 사용)
             // 문자열 함수
             FunctionReplacement("\\bSUBSTR\\s*\\(", "SUBSTRING("),
             FunctionReplacement("\\bLENGTH\\s*\\(", "CHAR_LENGTH("),
             FunctionReplacement("\\bLENGTHB\\s*\\(", "LENGTH("),
-            FunctionReplacement("\\bINSTR\\s*\\(", "LOCATE("),
+            // INSTR은 별도 처리 필요 (파라미터 순서 변환)
             // 수학 함수
             FunctionReplacement("\\bMOD\\s*\\(", "MOD("),
             FunctionReplacement("\\bPOWER\\s*\\(", "POW("),
             FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\b", "RAND()"),
-            // DECODE → CASE (단순 변환, 완전한 변환은 별도 처리 필요)
-            FunctionReplacement("\\bDECODE\\s*\\(", "CASE "),
+            // DECODE는 별도 처리 (DecodeConverter 사용)
             // 시퀀스 (MySQL 8.0+는 시퀀스 미지원, 경고 필요)
             FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.NEXTVAL", "NULL /* SEQUENCE $1.NEXTVAL not supported in MySQL */"),
             FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.CURRVAL", "NULL /* SEQUENCE $1.CURRVAL not supported in MySQL */"),
@@ -86,8 +152,7 @@ class StringBasedFunctionConverter {
             // 수학 함수
             FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\b", "RANDOM()"),
             FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1 + RANDOM() * ($2 - $1))"),
-            // DECODE → CASE
-            FunctionReplacement("\\bDECODE\\s*\\(", "CASE "),
+            // DECODE는 별도 처리 (DecodeConverter 사용)
             // 시퀀스
             FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.NEXTVAL", "nextval('$1')"),
             FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.CURRVAL", "currval('$1')"),
@@ -122,7 +187,7 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\bWEEK\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(WEEK FROM $1)"),
             // 문자열 함수
             FunctionReplacement("\\bIFNULL\\s*\\(", "COALESCE("),
-            FunctionReplacement("\\bIF\\s*\\(\\s*([^,]+)\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "CASE WHEN $1 THEN $2 ELSE $3 END"),
+            // IF는 별도 처리 (DecodeConverter.convertIfToCaseWhen 사용)
             FunctionReplacement("\\bGROUP_CONCAT\\s*\\(\\s*([^)]+)\\s+ORDER\\s+BY\\s+([^)]+)\\s+SEPARATOR\\s+('[^']*')\\s*\\)", "STRING_AGG($1, $3 ORDER BY $2)"),
             FunctionReplacement("\\bGROUP_CONCAT\\s*\\(\\s*([^)]+)\\s+SEPARATOR\\s+('[^']*')\\s*\\)", "STRING_AGG($1, $2)"),
             FunctionReplacement("\\bGROUP_CONCAT\\s*\\(", "STRING_AGG("),
@@ -170,7 +235,7 @@ class StringBasedFunctionConverter {
             // NULL 처리 함수
             FunctionReplacement("\\bIFNULL\\s*\\(", "NVL("),
             FunctionReplacement("\\bCOALESCE\\s*\\(", "NVL("),
-            FunctionReplacement("\\bIF\\s*\\(\\s*([^,]+)\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "CASE WHEN $1 THEN $2 ELSE $3 END"),
+            // IF는 별도 처리 (DecodeConverter.convertIfToCaseWhen 사용)
             // 문자열 함수
             FunctionReplacement("\\bSUBSTRING\\s*\\(", "SUBSTR("),
             FunctionReplacement("\\bCHAR_LENGTH\\s*\\(", "LENGTH("),
@@ -375,6 +440,35 @@ class StringBasedFunctionConverter {
         var result = sql
         var hasChanges = false
 
+        // 1. DECODE, NVL2 함수 변환 (Oracle → 다른 DB)
+        if (sourceDialect == DialectType.ORACLE) {
+            val beforeDecode = result
+            result = DecodeConverter.convertDecodeToCaseWhen(result)
+            if (result != beforeDecode) {
+                appliedRules.add("DECODE → CASE WHEN 변환")
+                hasChanges = true
+            }
+
+            // NVL2 함수 변환 (Oracle → 다른 DB)
+            val beforeNvl2 = result
+            result = DecodeConverter.convertNvl2ToCaseWhen(result)
+            if (result != beforeNvl2) {
+                appliedRules.add("NVL2 → CASE WHEN 변환")
+                hasChanges = true
+            }
+        }
+
+        // 2. IF 함수 변환 (MySQL → 다른 DB)
+        if (sourceDialect == DialectType.MYSQL && targetDialect != DialectType.MYSQL) {
+            val beforeIf = result
+            result = DecodeConverter.convertIfToCaseWhen(result)
+            if (result != beforeIf) {
+                appliedRules.add("IF → CASE WHEN 변환")
+                hasChanges = true
+            }
+        }
+
+        // 3. 정규식 기반 함수 변환
         for (replacement in replacements) {
             val newResult = replacement.regex.replace(result, replacement.replacement)
             if (newResult != result) {
@@ -383,11 +477,216 @@ class StringBasedFunctionConverter {
             }
         }
 
+        // 4. INSTR 파라미터 순서 변환 (Oracle → MySQL)
+        if (sourceDialect == DialectType.ORACLE && targetDialect == DialectType.MYSQL) {
+            val beforeInstr = result
+            result = convertOracleInstrToMySqlLocate(result)
+            if (result != beforeInstr) {
+                appliedRules.add("INSTR → LOCATE 파라미터 순서 변환")
+                hasChanges = true
+            }
+        }
+
+        // 5. 날짜 포맷 문자열 변환
+        result = convertDateFormats(result, sourceDialect, targetDialect, appliedRules)
+
         if (hasChanges) {
             appliedRules.add("${sourceDialect.name} → ${targetDialect.name} 함수 변환")
         }
 
         return result
+    }
+
+    /**
+     * Oracle INSTR(string, substring) → MySQL LOCATE(substring, string) 변환
+     */
+    private fun convertOracleInstrToMySqlLocate(sql: String): String {
+        val instrPattern = Regex("""INSTR\s*\(\s*([^,]+)\s*,\s*([^,)]+)\s*\)""", RegexOption.IGNORE_CASE)
+        return instrPattern.replace(sql) { match ->
+            val stringArg = match.groupValues[1].trim()
+            val substringArg = match.groupValues[2].trim()
+            "LOCATE($substringArg, $stringArg)"
+        }
+    }
+
+    /**
+     * 날짜 포맷 문자열 변환
+     */
+    private fun convertDateFormats(
+        sql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        when {
+            // Oracle → MySQL: TO_CHAR/TO_DATE 안의 날짜 포맷 변환
+            sourceDialect == DialectType.ORACLE && targetDialect == DialectType.MYSQL -> {
+                val formatPattern = Regex("""(DATE_FORMAT|STR_TO_DATE)\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)
+                val beforeFormat = result
+                result = formatPattern.replace(result) { match ->
+                    val funcName = match.groupValues[1]
+                    val dateExpr = match.groupValues[2]
+                    val oracleFormat = match.groupValues[3]
+                    val mysqlFormat = convertOracleFormatToMySql(oracleFormat)
+                    "$funcName($dateExpr, '$mysqlFormat')"
+                }
+                if (result != beforeFormat) {
+                    appliedRules.add("Oracle → MySQL 날짜 포맷 변환")
+                }
+            }
+
+            // MySQL → Oracle: DATE_FORMAT/STR_TO_DATE 안의 날짜 포맷 변환
+            sourceDialect == DialectType.MYSQL && targetDialect == DialectType.ORACLE -> {
+                val formatPattern = Regex("""(TO_CHAR|TO_DATE)\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)
+                val beforeFormat = result
+                result = formatPattern.replace(result) { match ->
+                    val funcName = match.groupValues[1]
+                    val dateExpr = match.groupValues[2]
+                    val mysqlFormat = match.groupValues[3]
+                    val oracleFormat = convertMySqlFormatToOracle(mysqlFormat)
+                    "$funcName($dateExpr, '$oracleFormat')"
+                }
+                if (result != beforeFormat) {
+                    appliedRules.add("MySQL → Oracle 날짜 포맷 변환")
+                }
+            }
+
+            // MySQL → PostgreSQL: DATE_FORMAT → TO_CHAR 후 포맷 변환
+            sourceDialect == DialectType.MYSQL && targetDialect == DialectType.POSTGRESQL -> {
+                val formatPattern = Regex("""(TO_CHAR|TO_DATE)\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)
+                val beforeFormat = result
+                result = formatPattern.replace(result) { match ->
+                    val funcName = match.groupValues[1]
+                    val dateExpr = match.groupValues[2]
+                    val mysqlFormat = match.groupValues[3]
+                    val pgFormat = convertMySqlFormatToPostgreSql(mysqlFormat)
+                    "$funcName($dateExpr, '$pgFormat')"
+                }
+                if (result != beforeFormat) {
+                    appliedRules.add("MySQL → PostgreSQL 날짜 포맷 변환")
+                }
+            }
+
+            // PostgreSQL → MySQL: TO_CHAR → DATE_FORMAT 후 포맷 변환
+            sourceDialect == DialectType.POSTGRESQL && targetDialect == DialectType.MYSQL -> {
+                val formatPattern = Regex("""(DATE_FORMAT|STR_TO_DATE)\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*\)""", RegexOption.IGNORE_CASE)
+                val beforeFormat = result
+                result = formatPattern.replace(result) { match ->
+                    val funcName = match.groupValues[1]
+                    val dateExpr = match.groupValues[2]
+                    val pgFormat = match.groupValues[3]
+                    val mysqlFormat = convertPostgreSqlFormatToMySql(pgFormat)
+                    "$funcName($dateExpr, '$mysqlFormat')"
+                }
+                if (result != beforeFormat) {
+                    appliedRules.add("PostgreSQL → MySQL 날짜 포맷 변환")
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Oracle 날짜 포맷 → MySQL 날짜 포맷 변환
+     * 플레이스홀더를 사용하여 변환된 값이 다시 변환되는 것을 방지
+     */
+    private fun convertOracleFormatToMySql(oracleFormat: String): String {
+        var result = oracleFormat
+        val placeholders = mutableMapOf<String, String>()
+        var placeholderIndex = 0
+
+        // 길이가 긴 것부터 변환 (HH24를 먼저 처리해야 HH만 변환되는 것을 방지)
+        val sortedMappings = oracleToMySqlDateFormat.entries.sortedByDescending { it.key.length }
+        for ((oracle, mysql) in sortedMappings) {
+            if (mysql.isNotEmpty()) {
+                val placeholder = "\u0000PH${placeholderIndex++}\u0000"
+                placeholders[placeholder] = mysql
+                result = result.replace(oracle, placeholder, ignoreCase = true)
+            }
+        }
+
+        // 플레이스홀더를 실제 값으로 대체
+        for ((placeholder, mysql) in placeholders) {
+            result = result.replace(placeholder, mysql)
+        }
+        return result
+    }
+
+    /**
+     * MySQL 날짜 포맷 → Oracle 날짜 포맷 변환
+     * 플레이스홀더를 사용하여 변환된 값이 다시 변환되는 것을 방지
+     */
+    private fun convertMySqlFormatToOracle(mysqlFormat: String): String {
+        var result = mysqlFormat
+        val placeholders = mutableMapOf<String, String>()
+        var placeholderIndex = 0
+
+        // 길이가 긴 것부터 변환
+        val sortedMappings = mySqlToOracleDateFormat.entries.sortedByDescending { it.key.length }
+        for ((mysql, oracle) in sortedMappings) {
+            val placeholder = "\u0000PH${placeholderIndex++}\u0000"
+            placeholders[placeholder] = oracle
+            result = result.replace(mysql, placeholder)
+        }
+
+        // 플레이스홀더를 실제 값으로 대체
+        for ((placeholder, oracle) in placeholders) {
+            result = result.replace(placeholder, oracle)
+        }
+        return result
+    }
+
+    /**
+     * MySQL 날짜 포맷 → PostgreSQL 날짜 포맷 변환
+     */
+    private fun convertMySqlFormatToPostgreSql(mysqlFormat: String): String {
+        // MySQL → Oracle 변환 (플레이스홀더 사용)
+        val oracleFormat = convertMySqlFormatToOracle(mysqlFormat)
+
+        // Oracle → PostgreSQL 변환 (플레이스홀더 사용)
+        var result = oracleFormat
+        val placeholders = mutableMapOf<String, String>()
+        var placeholderIndex = 0
+
+        val sortedMappings = oracleToPostgreSqlDateFormat.entries.sortedByDescending { it.key.length }
+        for ((oracle, pg) in sortedMappings) {
+            val placeholder = "\u0000PH${placeholderIndex++}\u0000"
+            placeholders[placeholder] = pg
+            result = result.replace(oracle, placeholder, ignoreCase = true)
+        }
+
+        for ((placeholder, pg) in placeholders) {
+            result = result.replace(placeholder, pg)
+        }
+        return result
+    }
+
+    /**
+     * PostgreSQL 날짜 포맷 → MySQL 날짜 포맷 변환
+     */
+    private fun convertPostgreSqlFormatToMySql(pgFormat: String): String {
+        // PostgreSQL → Oracle 역변환 (플레이스홀더 사용)
+        var result = pgFormat
+        val placeholders = mutableMapOf<String, String>()
+        var placeholderIndex = 0
+
+        val pgToOracle = oracleToPostgreSqlDateFormat.entries.associate { it.value to it.key }
+        val sortedMappings = pgToOracle.entries.sortedByDescending { it.key.length }
+        for ((pg, oracle) in sortedMappings) {
+            val placeholder = "\u0000PH${placeholderIndex++}\u0000"
+            placeholders[placeholder] = oracle
+            result = result.replace(pg, placeholder, ignoreCase = true)
+        }
+
+        for ((placeholder, oracle) in placeholders) {
+            result = result.replace(placeholder, oracle)
+        }
+
+        // Oracle → MySQL 변환
+        return convertOracleFormatToMySql(result)
     }
 }
 

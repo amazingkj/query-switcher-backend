@@ -52,7 +52,9 @@ class ComprehensiveConversionTest {
             val appliedRules = mutableListOf<String>()
             val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
 
-            assertTrue(result.contains("IF("), "NVL2 → IF 변환 실패: $result")
+            // NVL2는 CASE WHEN IS NOT NULL로 정확하게 변환됨
+            assertTrue(result.contains("CASE WHEN"), "NVL2 → CASE WHEN 변환 실패: $result")
+            assertTrue(result.contains("IS NOT NULL"), "IS NOT NULL 조건 누락: $result")
         }
 
         @Test

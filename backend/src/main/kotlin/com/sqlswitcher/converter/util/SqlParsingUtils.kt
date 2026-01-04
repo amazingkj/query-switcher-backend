@@ -7,6 +7,7 @@ object SqlParsingUtils {
 
     /**
      * 함수 시작 위치에서 괄호 매칭으로 함수 끝 위치 찾기
+     * (문자열 리터럴 내부의 괄호는 무시)
      * @param sql SQL 문자열
      * @param argsStartIdx 여는 괄호 다음 인덱스
      * @return 닫는 괄호 다음 인덱스, 또는 매칭 실패 시 -1
@@ -14,10 +15,27 @@ object SqlParsingUtils {
     fun findMatchingBracket(sql: String, argsStartIdx: Int): Int {
         var depth = 1
         var idx = argsStartIdx
+        var inSingleQuote = false
+        var inDoubleQuote = false
+
         while (idx < sql.length && depth > 0) {
-            when (sql[idx]) {
-                '(' -> depth++
-                ')' -> depth--
+            val char = sql[idx]
+
+            // 문자열 리터럴 처리
+            if (char == '\'' && !inDoubleQuote) {
+                // 이스케이프된 작은따옴표 확인 ('')
+                if (inSingleQuote && idx + 1 < sql.length && sql[idx + 1] == '\'') {
+                    idx += 2
+                    continue
+                }
+                inSingleQuote = !inSingleQuote
+            } else if (char == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote
+            } else if (!inSingleQuote && !inDoubleQuote) {
+                when (char) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
             }
             idx++
         }
@@ -25,33 +43,57 @@ object SqlParsingUtils {
     }
 
     /**
-     * 함수 인자를 콤마로 분리 (괄호 내부의 콤마는 무시)
+     * 함수 인자를 콤마로 분리 (괄호 내부 및 문자열 리터럴 내부의 콤마는 무시)
      */
     fun splitFunctionArgs(argsStr: String): List<String> {
         val args = mutableListOf<String>()
         var depth = 0
         var current = StringBuilder()
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var i = 0
 
-        for (char in argsStr) {
-            when (char) {
-                '(' -> {
-                    depth++
-                    current.append(char)
+        while (i < argsStr.length) {
+            val char = argsStr[i]
+
+            // 문자열 리터럴 처리
+            if (char == '\'' && !inDoubleQuote) {
+                // 이스케이프된 작은따옴표 확인 ('')
+                if (inSingleQuote && i + 1 < argsStr.length && argsStr[i + 1] == '\'') {
+                    current.append("''")
+                    i += 2
+                    continue
                 }
-                ')' -> {
-                    depth--
-                    current.append(char)
-                }
-                ',' -> {
-                    if (depth == 0) {
-                        args.add(current.toString().trim())
-                        current = StringBuilder()
-                    } else {
+                inSingleQuote = !inSingleQuote
+                current.append(char)
+            } else if (char == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote
+                current.append(char)
+            } else if (inSingleQuote || inDoubleQuote) {
+                // 문자열 리터럴 내부는 그대로 추가
+                current.append(char)
+            } else {
+                when (char) {
+                    '(' -> {
+                        depth++
                         current.append(char)
                     }
+                    ')' -> {
+                        depth--
+                        current.append(char)
+                    }
+                    ',' -> {
+                        if (depth == 0) {
+                            args.add(current.toString().trim())
+                            current = StringBuilder()
+                        } else {
+                            current.append(char)
+                        }
+                    }
+                    else -> current.append(char)
                 }
-                else -> current.append(char)
             }
+            i++
         }
 
         if (current.isNotEmpty()) {

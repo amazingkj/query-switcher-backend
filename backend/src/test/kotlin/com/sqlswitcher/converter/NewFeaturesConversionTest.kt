@@ -219,6 +219,43 @@ class NewFeaturesConversionTest {
         }
 
         @Test
+        @DisplayName("중첩 NVL2 → CASE WHEN 변환")
+        fun testNestedNvl2Conversion() {
+            val oracle = "SELECT NVL2(a, NVL2(b, 'both', 'a only'), 'none') FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertFalse(result.contains("NVL2"), "NVL2가 완전히 제거되지 않음: $result")
+            val caseCount = "CASE WHEN".toRegex().findAll(result).count()
+            assertTrue(caseCount >= 2, "중첩된 CASE WHEN이 모두 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("복잡한 인자를 가진 NVL2 변환")
+        fun testNvl2WithComplexArgs() {
+            val oracle = "SELECT NVL2(SUBSTR(name, 1, 5), UPPER(name), LOWER(name)) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CASE WHEN"), "NVL2 → CASE WHEN 변환 실패: $result")
+            assertTrue(result.contains("IS NOT NULL"), "IS NOT NULL이 있어야 함: $result")
+            assertFalse(result.contains("NVL2"), "NVL2가 완전히 제거되지 않음: $result")
+        }
+
+        @Test
+        @DisplayName("문자열 리터럴 내 쉼표가 있는 NVL2 변환")
+        fun testNvl2WithCommaInStringLiteral() {
+            val oracle = "SELECT NVL2(status, 'Active, running', 'Inactive, stopped') FROM procs"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CASE WHEN"), "NVL2 → CASE WHEN 변환 실패: $result")
+            assertTrue(result.contains("'Active, running'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertTrue(result.contains("'Inactive, stopped'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertFalse(result.contains("NVL2"), "NVL2가 완전히 제거되지 않음: $result")
+        }
+
+        @Test
         @DisplayName("시퀀스 NEXTVAL → nextval() 변환")
         fun testSequenceNextvalConversion() {
             val oracle = "SELECT seq_user.NEXTVAL FROM DUAL"
@@ -313,6 +350,43 @@ class NewFeaturesConversionTest {
             val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
 
             assertTrue(result.contains("CASE WHEN"), "IF → CASE WHEN 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("중첩 IF → CASE WHEN 변환")
+        fun testNestedIfConversion() {
+            val mysql = "SELECT IF(a > 0, IF(b > 0, 'both', 'a only'), 'none') FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertFalse(result.contains("IF("), "IF가 완전히 제거되지 않음: $result")
+            val caseCount = "CASE WHEN".toRegex().findAll(result).count()
+            assertTrue(caseCount >= 2, "중첩된 CASE WHEN이 모두 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("복잡한 인자를 가진 IF 변환")
+        fun testIfWithComplexArgs() {
+            val mysql = "SELECT IF(COALESCE(a, b) > 0, CONCAT('prefix', name), SUBSTRING(name, 1, 5)) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CASE WHEN"), "IF → CASE WHEN 변환 실패: $result")
+            assertTrue(result.contains("COALESCE"), "COALESCE가 유지되어야 함: $result")
+            assertFalse(result.contains("IF("), "IF가 완전히 제거되지 않음: $result")
+        }
+
+        @Test
+        @DisplayName("문자열 리터럴 내 쉼표가 있는 IF 변환")
+        fun testIfWithCommaInStringLiteral() {
+            val mysql = "SELECT IF(status = 'A', 'Active, enabled', 'Inactive, disabled') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CASE WHEN"), "IF → CASE WHEN 변환 실패: $result")
+            assertTrue(result.contains("'Active, enabled'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertTrue(result.contains("'Inactive, disabled'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertFalse(result.contains("IF("), "IF가 완전히 제거되지 않음: $result")
         }
 
         @Test
@@ -531,6 +605,223 @@ class NewFeaturesConversionTest {
             val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
 
             assertTrue(result.contains("CASE WHEN"), "IF → CASE WHEN 변환 실패: $result")
+        }
+    }
+
+    // ==================== DECODE 완전 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("DECODE → CASE WHEN 완전 변환 테스트")
+    inner class DecodeConversionTest {
+
+        @Test
+        @DisplayName("DECODE(expr, search1, result1, default) → CASE expr WHEN search1 THEN result1 ELSE default END")
+        fun testDecodeBasicConversion() {
+            val oracle = "SELECT DECODE(status, 'A', 'Active', 'Inactive') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("CASE status"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("WHEN 'A' THEN 'Active'"), "WHEN THEN 변환 실패: $result")
+            assertTrue(result.contains("ELSE 'Inactive' END"), "ELSE END 변환 실패: $result")
+            assertFalse(result.contains("DECODE"), "DECODE가 제거되지 않음: $result")
+        }
+
+        @Test
+        @DisplayName("DECODE with multiple conditions")
+        fun testDecodeMultipleConditions() {
+            val oracle = "SELECT DECODE(grade, 'A', 100, 'B', 80, 'C', 60, 0) FROM students"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("CASE grade"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("WHEN 'A' THEN 100"), "WHEN A 변환 실패: $result")
+            assertTrue(result.contains("WHEN 'B' THEN 80"), "WHEN B 변환 실패: $result")
+            assertTrue(result.contains("WHEN 'C' THEN 60"), "WHEN C 변환 실패: $result")
+            assertTrue(result.contains("ELSE 0 END"), "ELSE END 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("DECODE without default value")
+        fun testDecodeWithoutDefault() {
+            val oracle = "SELECT DECODE(type, 1, 'ONE', 2, 'TWO') FROM items"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("CASE type"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("WHEN 1 THEN 'ONE'"), "WHEN 1 변환 실패: $result")
+            assertTrue(result.contains("WHEN 2 THEN 'TWO'"), "WHEN 2 변환 실패: $result")
+            assertTrue(result.contains("END"), "END 누락: $result")
+        }
+
+        @Test
+        @DisplayName("Nested DECODE conversion")
+        fun testNestedDecodeConversion() {
+            val oracle = "SELECT DECODE(a, 1, DECODE(b, 2, 'X', 'Y'), 'Z') FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertFalse(result.contains("DECODE"), "DECODE가 완전히 제거되지 않음: $result")
+            // 외부와 내부 CASE 모두 변환되어야 함
+            val caseCount = "CASE".toRegex().findAll(result).count()
+            assertTrue(caseCount >= 2, "중첩된 CASE가 모두 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("DECODE to PostgreSQL")
+        fun testDecodeToPostgreSQL() {
+            val oracle = "SELECT DECODE(status, 'Y', 'Yes', 'No') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CASE status"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("WHEN 'Y' THEN 'Yes'"), "WHEN THEN 변환 실패: $result")
+            assertFalse(result.contains("DECODE"), "DECODE가 제거되지 않음: $result")
+        }
+
+        @Test
+        @DisplayName("문자열 리터럴 내 쉼표가 있는 DECODE 변환")
+        fun testDecodeWithCommaInStringLiteral() {
+            val oracle = "SELECT DECODE(type, 'A', 'Type A, active', 'B', 'Type B, beta', 'Unknown, N/A') FROM items"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("CASE type"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("'Type A, active'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertTrue(result.contains("'Type B, beta'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertTrue(result.contains("'Unknown, N/A'"), "기본값 문자열 리터럴이 보존되어야 함: $result")
+            assertFalse(result.contains("DECODE"), "DECODE가 제거되지 않음: $result")
+        }
+
+        @Test
+        @DisplayName("문자열 리터럴 내 괄호가 있는 DECODE 변환")
+        fun testDecodeWithParenthesisInStringLiteral() {
+            val oracle = "SELECT DECODE(status, 1, 'Active (running)', 'Inactive (stopped)') FROM procs"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("CASE status"), "CASE expr 변환 실패: $result")
+            assertTrue(result.contains("'Active (running)'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertTrue(result.contains("'Inactive (stopped)'"), "문자열 리터럴이 보존되어야 함: $result")
+            assertFalse(result.contains("DECODE"), "DECODE가 제거되지 않음: $result")
+        }
+    }
+
+    // ==================== 날짜 포맷 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("날짜 포맷 문자열 변환 테스트")
+    inner class DateFormatConversionTest {
+
+        @Test
+        @DisplayName("Oracle → MySQL: 'YYYY-MM-DD' → '%Y-%m-%d'")
+        fun testOracleToMySqlDateFormat() {
+            val oracle = "SELECT TO_CHAR(created_at, 'YYYY-MM-DD') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("DATE_FORMAT("), "TO_CHAR → DATE_FORMAT 변환 실패: $result")
+            assertTrue(result.contains("%Y-%m-%d"), "날짜 포맷 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle → MySQL: 'YYYY-MM-DD HH24:MI:SS' → '%Y-%m-%d %H:%i:%s'")
+        fun testOracleToMySqlDateTimeFormat() {
+            val oracle = "SELECT TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("%Y-%m-%d %H:%i:%s"), "날짜시간 포맷 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL → Oracle: '%Y-%m-%d' → 'YYYY-MM-DD'")
+        fun testMySqlToOracleDateFormat() {
+            val mysql = "SELECT DATE_FORMAT(created_at, '%Y-%m-%d') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(result.contains("TO_CHAR("), "DATE_FORMAT → TO_CHAR 변환 실패: $result")
+            assertTrue(result.contains("YYYY-MM-DD"), "날짜 포맷 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL → PostgreSQL: '%Y-%m-%d %H:%i:%s' → 'YYYY-MM-DD HH24:MI:SS'")
+        fun testMySqlToPostgreSqlDateFormat() {
+            val mysql = "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("TO_CHAR("), "DATE_FORMAT → TO_CHAR 변환 실패: $result")
+            assertTrue(result.contains("YYYY-MM-DD HH24:MI:SS"), "날짜 포맷 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("PostgreSQL → MySQL: 'YYYY-MM-DD' → '%Y-%m-%d'")
+        fun testPostgreSqlToMySqlDateFormat() {
+            val postgresql = "SELECT TO_CHAR(created_at, 'YYYY-MM-DD') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("DATE_FORMAT("), "TO_CHAR → DATE_FORMAT 변환 실패: $result")
+            assertTrue(result.contains("%Y-%m-%d"), "날짜 포맷 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle 날짜 포맷 요소들 변환 (MON, DAY 등)")
+        fun testOracleAdvancedDateFormat() {
+            val oracle = "SELECT TO_CHAR(created_at, 'DD-MON-YYYY DAY') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("%d-%b-%Y %W"), "날짜 포맷 변환 실패: $result")
+        }
+    }
+
+    // ==================== INSTR 파라미터 순서 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("INSTR 파라미터 순서 변환 테스트")
+    inner class InstrConversionTest {
+
+        @Test
+        @DisplayName("Oracle INSTR(string, substr) → MySQL LOCATE(substr, string)")
+        fun testOracleInstrToMySqlLocate() {
+            val oracle = "SELECT INSTR(name, 'a') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("LOCATE('a', name)"), "INSTR → LOCATE 파라미터 순서 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle INSTR with complex expression")
+        fun testOracleInstrComplexExpr() {
+            val oracle = "SELECT INSTR(UPPER(name), 'TEST') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("LOCATE('TEST', UPPER(name))"), "복합 표현식 INSTR 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle INSTR → PostgreSQL POSITION")
+        fun testOracleInstrToPostgreSqlPosition() {
+            val oracle = "SELECT INSTR(email, '@') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("POSITION('@' IN email)"), "INSTR → POSITION 변환 실패: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL LOCATE → Oracle INSTR (역방향)")
+        fun testMySqlLocateToOracleInstr() {
+            val mysql = "SELECT LOCATE('a', name) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(result.contains("INSTR(name, 'a')"), "LOCATE → INSTR 파라미터 순서 변환 실패: $result")
         }
     }
 
