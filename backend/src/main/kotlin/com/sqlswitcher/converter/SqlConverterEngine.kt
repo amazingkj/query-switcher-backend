@@ -2,11 +2,22 @@ package com.sqlswitcher.converter
 
 import com.sqlswitcher.converter.error.ConversionErrorHandler
 import com.sqlswitcher.converter.feature.PackageConversionService
+import com.sqlswitcher.converter.feature.dblink.DatabaseLinkConverter
+import com.sqlswitcher.converter.feature.dbms.DbmsPackageConverter
 import com.sqlswitcher.converter.feature.function.CteConverter
 import com.sqlswitcher.converter.feature.function.HierarchicalQueryConverter
 import com.sqlswitcher.converter.feature.function.PivotUnpivotConverter
 import com.sqlswitcher.converter.feature.function.WindowFunctionConverter
+import com.sqlswitcher.converter.feature.index.AdvancedIndexConverter
+import com.sqlswitcher.converter.feature.mview.MaterializedViewConverter
+import com.sqlswitcher.converter.feature.plsql.OraclePackageConverter
+import com.sqlswitcher.converter.feature.sequence.AdvancedSequenceConverter
+import com.sqlswitcher.converter.feature.synonym.SynonymConverter
+import com.sqlswitcher.converter.feature.trigger.OracleTriggerConverter
+import com.sqlswitcher.converter.feature.udt.UserDefinedTypeConverter
+import com.sqlswitcher.converter.formatter.SqlFormatter
 import com.sqlswitcher.converter.preprocessor.OracleSyntaxPreprocessor
+import com.sqlswitcher.converter.recovery.ConversionRecoveryService
 import com.sqlswitcher.converter.stringbased.StringBasedFunctionConverter
 import com.sqlswitcher.converter.stringbased.StringBasedDataTypeConverter
 import com.sqlswitcher.converter.validation.SqlValidationService
@@ -289,8 +300,25 @@ class SqlConverterEngine(
     ): ConversionResult {
         var convertedSql = sql
 
-        // Oracle PACKAGE 감지 및 변환
+        // Oracle에서 다른 DB로 변환 시 특화 변환기 적용
         if (sourceDialectType == DialectType.ORACLE && targetDialectType != DialectType.ORACLE) {
+
+            // Oracle PACKAGE 감지 및 변환 (신규 OraclePackageConverter 사용)
+            if (OraclePackageConverter.isPackageStatement(sql)) {
+                convertedSql = OraclePackageConverter.convert(
+                    sql, sourceDialectType, targetDialectType, warnings, appliedRules
+                )
+                val endTime = System.currentTimeMillis()
+                sqlMetricsService.recordConversionDuration(endTime - startTime, sourceDialectType.name, targetDialectType.name)
+                sqlMetricsService.recordConversionSuccess(sourceDialectType.name, targetDialectType.name)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+
+            // 기존 PackageConversionService 폴백
             if (packageConversionService.isPackageStatement(sql) || packageConversionService.isPackageBodyStatement(sql)) {
                 convertedSql = packageConversionService.convertPackage(
                     sql, sourceDialectType, targetDialectType, warnings, appliedRules
@@ -319,6 +347,44 @@ class SqlConverterEngine(
                     appliedRules = appliedRules
                 )
             }
+
+            // Oracle TRIGGER 변환
+            if (OracleTriggerConverter.isTriggerStatement(sql)) {
+                convertedSql = OracleTriggerConverter.convert(
+                    sql, sourceDialectType, targetDialectType, warnings, appliedRules
+                )
+                val endTime = System.currentTimeMillis()
+                sqlMetricsService.recordConversionDuration(endTime - startTime, sourceDialectType.name, targetDialectType.name)
+                sqlMetricsService.recordConversionSuccess(sourceDialectType.name, targetDialectType.name)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+
+            // Oracle SYNONYM 변환
+            if (SynonymConverter.hasSynonymStatements(sql)) {
+                convertedSql = SynonymConverter.convert(
+                    sql, sourceDialectType, targetDialectType, warnings, appliedRules
+                )
+                val endTime = System.currentTimeMillis()
+                sqlMetricsService.recordConversionDuration(endTime - startTime, sourceDialectType.name, targetDialectType.name)
+                sqlMetricsService.recordConversionSuccess(sourceDialectType.name, targetDialectType.name)
+                return ConversionResult(
+                    convertedSql = convertedSql,
+                    warnings = warnings,
+                    appliedRules = appliedRules
+                )
+            }
+
+            // 사용자 정의 타입(UDT) 변환
+            if (UserDefinedTypeConverter.hasUserDefinedTypes(sql)) {
+                convertedSql = UserDefinedTypeConverter.convert(
+                    sql, sourceDialectType, targetDialectType, warnings, appliedRules
+                )
+                // UDT 변환 후 계속 진행 (다른 변환도 적용 가능)
+            }
         }
 
         // Oracle 특화 문법 전처리 (별도 컴포넌트로 위임)
@@ -343,6 +409,43 @@ class SqlConverterEngine(
         convertedSql = WindowFunctionConverter.convert(
             convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
         )
+
+        // DBMS_* 패키지 변환 (DBMS_OUTPUT, DBMS_LOB, DBMS_RANDOM 등)
+        if (DbmsPackageConverter.hasDbmsPackageCalls(convertedSql)) {
+            convertedSql = DbmsPackageConverter.convert(
+                convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+            )
+        }
+
+        // 시퀀스 변환 (SEQUENCE 문장 또는 NEXTVAL/CURRVAL 참조)
+        if (AdvancedSequenceConverter.isSequenceStatement(convertedSql) ||
+            AdvancedSequenceConverter.hasSequenceReference(convertedSql)) {
+            convertedSql = AdvancedSequenceConverter.convert(
+                convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+            )
+        }
+
+        // 인덱스 변환 (CREATE/DROP/ALTER INDEX)
+        if (AdvancedIndexConverter.isIndexStatement(convertedSql)) {
+            convertedSql = AdvancedIndexConverter.convert(
+                convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+            )
+        }
+
+        // Materialized View 변환
+        if (MaterializedViewConverter.isMaterializedViewStatement(convertedSql)) {
+            convertedSql = MaterializedViewConverter.convert(
+                convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+            )
+        }
+
+        // Database Link 변환 (CREATE/DROP DATABASE LINK, @dblink 참조)
+        if (DatabaseLinkConverter.isDatabaseLinkStatement(convertedSql) ||
+            DatabaseLinkConverter.hasDbLinkReference(convertedSql)) {
+            convertedSql = DatabaseLinkConverter.convert(
+                convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+            )
+        }
 
         // 함수/데이터타입 변환 (별도 컴포넌트로 위임)
         convertedSql = stringBasedFunctionConverter.convert(convertedSql, sourceDialectType, targetDialectType, appliedRules)

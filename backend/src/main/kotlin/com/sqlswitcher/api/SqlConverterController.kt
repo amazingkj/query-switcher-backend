@@ -64,6 +64,148 @@ class SqlConverterController(
         return ResponseEntity.ok(mapOf("status" to "UP", "service" to "SQL Switcher"))
     }
 
+    @GetMapping("/dialects")
+    @Operation(
+        summary = "Get supported dialects",
+        description = "Returns a list of supported database dialects for conversion"
+    )
+    fun getSupportedDialects(): ResponseEntity<DialectsResponse> {
+        return ResponseEntity.ok(DialectsResponse(
+            dialects = listOf(
+                DialectInfo("oracle", "Oracle Database", listOf("11g", "12c", "19c", "21c")),
+                DialectInfo("mysql", "MySQL", listOf("5.7", "8.0")),
+                DialectInfo("postgresql", "PostgreSQL", listOf("12", "13", "14", "15", "16"))
+            ),
+            supportedConversions = listOf(
+                ConversionPath("oracle", "mysql"),
+                ConversionPath("oracle", "postgresql"),
+                ConversionPath("mysql", "oracle"),
+                ConversionPath("mysql", "postgresql"),
+                ConversionPath("postgresql", "oracle"),
+                ConversionPath("postgresql", "mysql")
+            )
+        ))
+    }
+
+    @GetMapping("/features")
+    @Operation(
+        summary = "Get supported conversion features",
+        description = "Returns a list of SQL features that can be converted"
+    )
+    fun getSupportedFeatures(): ResponseEntity<FeaturesResponse> {
+        return ResponseEntity.ok(FeaturesResponse(
+            features = listOf(
+                FeatureInfo(
+                    category = "DDL",
+                    features = listOf(
+                        "CREATE/DROP TABLE",
+                        "CREATE/DROP INDEX (BITMAP, REVERSE, FUNCTION-BASED)",
+                        "CREATE/DROP SEQUENCE",
+                        "CREATE/DROP MATERIALIZED VIEW",
+                        "CREATE/DROP SYNONYM",
+                        "CREATE/DROP DATABASE LINK"
+                    )
+                ),
+                FeatureInfo(
+                    category = "DML",
+                    features = listOf(
+                        "SELECT (JOIN, SUBQUERY, CTE)",
+                        "INSERT/UPDATE/DELETE",
+                        "MERGE (UPSERT)"
+                    )
+                ),
+                FeatureInfo(
+                    category = "Functions",
+                    features = listOf(
+                        "Date/Time functions (SYSDATE, NOW, CURRENT_TIMESTAMP)",
+                        "String functions (NVL, COALESCE, DECODE, SUBSTR)",
+                        "Aggregate functions (LISTAGG, GROUP_CONCAT, STRING_AGG)",
+                        "Window functions (ROW_NUMBER, RANK, LEAD, LAG)",
+                        "DBMS_* packages (DBMS_OUTPUT, DBMS_LOB, DBMS_RANDOM)"
+                    )
+                ),
+                FeatureInfo(
+                    category = "Oracle Specific",
+                    features = listOf(
+                        "Hierarchical queries (CONNECT BY → WITH RECURSIVE)",
+                        "PIVOT/UNPIVOT",
+                        "PL/SQL Packages and Procedures",
+                        "Triggers",
+                        "User-Defined Types",
+                        "ROWNUM → LIMIT/OFFSET"
+                    )
+                )
+            )
+        ))
+    }
+
+    @PostMapping(
+        "/batch-convert",
+        consumes = [MediaType.APPLICATION_JSON_VALUE],
+        produces = [MediaType.APPLICATION_JSON_VALUE]
+    )
+    @Operation(
+        summary = "Batch convert multiple SQL statements",
+        description = "Converts multiple SQL statements in a single request"
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Batch conversion successful",
+                content = [Content(schema = Schema(implementation = BatchConversionResponse::class))]
+            ),
+            ApiResponse(
+                responseCode = "400",
+                description = "Invalid request",
+                content = [Content(schema = Schema(implementation = ErrorResponse::class))]
+            )
+        ]
+    )
+    fun batchConvertSql(@Valid @RequestBody request: BatchConversionRequest): ResponseEntity<BatchConversionResponse> {
+        val sourceDialect = com.sqlswitcher.converter.DialectType.valueOf(request.sourceDialect.uppercase())
+        val targetDialect = com.sqlswitcher.converter.DialectType.valueOf(request.targetDialect.uppercase())
+
+        val results = request.statements.mapIndexed { index, sql ->
+            try {
+                val conversionRequest = ConversionRequest(
+                    sql = sql,
+                    sourceDialect = sourceDialect,
+                    targetDialect = targetDialect
+                )
+                val response = sqlConversionService.convertSql(conversionRequest)
+                BatchConversionResult(
+                    index = index,
+                    originalSql = sql,
+                    convertedSql = response.convertedSql,
+                    success = true,
+                    warningCount = response.warnings.size,
+                    appliedRules = response.appliedRules
+                )
+            } catch (e: Exception) {
+                BatchConversionResult(
+                    index = index,
+                    originalSql = sql,
+                    convertedSql = null,
+                    success = false,
+                    error = e.message,
+                    warningCount = 0,
+                    appliedRules = emptyList()
+                )
+            }
+        }
+
+        val successCount = results.count { it.success }
+        val failCount = results.size - successCount
+
+        return ResponseEntity.ok(BatchConversionResponse(
+            totalCount = results.size,
+            successCount = successCount,
+            failCount = failCount,
+            results = results
+        ))
+    }
+
     @PostMapping(
         "/highlight",
         consumes = [MediaType.APPLICATION_JSON_VALUE],
@@ -171,4 +313,64 @@ data class TokenInfo(
     val value: String,
     val type: String,
     val position: Int
+)
+
+/**
+ * 지원 방언 응답
+ */
+data class DialectsResponse(
+    val dialects: List<DialectInfo>,
+    val supportedConversions: List<ConversionPath>
+)
+
+data class DialectInfo(
+    val id: String,
+    val name: String,
+    val versions: List<String>
+)
+
+data class ConversionPath(
+    val source: String,
+    val target: String
+)
+
+/**
+ * 지원 기능 응답
+ */
+data class FeaturesResponse(
+    val features: List<FeatureInfo>
+)
+
+data class FeatureInfo(
+    val category: String,
+    val features: List<String>
+)
+
+/**
+ * 배치 변환 요청
+ */
+data class BatchConversionRequest(
+    val statements: List<String>,
+    val sourceDialect: String,
+    val targetDialect: String
+)
+
+/**
+ * 배치 변환 응답
+ */
+data class BatchConversionResponse(
+    val totalCount: Int,
+    val successCount: Int,
+    val failCount: Int,
+    val results: List<BatchConversionResult>
+)
+
+data class BatchConversionResult(
+    val index: Int,
+    val originalSql: String,
+    val convertedSql: String?,
+    val success: Boolean,
+    val error: String? = null,
+    val warningCount: Int,
+    val appliedRules: List<String>
 )

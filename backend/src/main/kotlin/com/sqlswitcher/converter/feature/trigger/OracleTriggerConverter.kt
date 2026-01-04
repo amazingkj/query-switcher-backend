@@ -535,6 +535,13 @@ object OracleTriggerConverter {
     )
 
     /**
+     * 트리거 문인지 확인
+     */
+    fun isTriggerStatement(sql: String): Boolean {
+        return TRIGGER_HEADER_PATTERN.containsMatchIn(sql)
+    }
+
+    /**
      * 트리거 추출
      */
     fun extractTriggers(sql: String): List<String> {

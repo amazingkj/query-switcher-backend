@@ -772,6 +772,14 @@ object OraclePackageConverter {
     )
 
     /**
+     * 패키지 문인지 확인
+     */
+    fun isPackageStatement(sql: String): Boolean {
+        return PACKAGE_SPEC_PATTERN.containsMatchIn(sql) ||
+               PACKAGE_BODY_PATTERN.containsMatchIn(sql)
+    }
+
+    /**
      * 패키지 이름 추출
      */
     fun extractPackageName(sql: String): String? {
