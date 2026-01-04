@@ -14,17 +14,87 @@ class StringBasedFunctionConverter {
     private val converters: Map<DialectPair, List<FunctionReplacement>> = mapOf(
         // Oracle → MySQL
         DialectPair(DialectType.ORACLE, DialectType.MYSQL) to listOf(
+            // 날짜/시간 함수
             FunctionReplacement("\\bSYSDATE\\b", "NOW()"),
+            FunctionReplacement("\\bSYSTIMESTAMP\\b", "NOW(6)"),
+            FunctionReplacement("\\bCURRENT_DATE\\b", "CURDATE()"),
+            FunctionReplacement("\\bCURRENT_TIMESTAMP\\b", "NOW()"),
+            // TO_CHAR → DATE_FORMAT (기본 날짜 형식)
+            FunctionReplacement("\\bTO_CHAR\\s*\\(", "DATE_FORMAT("),
+            // TO_DATE → STR_TO_DATE
+            FunctionReplacement("\\bTO_DATE\\s*\\(", "STR_TO_DATE("),
+            // TO_NUMBER → CAST
+            FunctionReplacement("\\bTO_NUMBER\\s*\\(([^)]+)\\)", "CAST($1 AS DECIMAL)"),
+            // ADD_MONTHS → DATE_ADD
+            FunctionReplacement("\\bADD_MONTHS\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "DATE_ADD($1, INTERVAL $2 MONTH)"),
+            // MONTHS_BETWEEN → TIMESTAMPDIFF
+            FunctionReplacement("\\bMONTHS_BETWEEN\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "TIMESTAMPDIFF(MONTH, $2, $1)"),
+            // TRUNC(date) → DATE()
+            FunctionReplacement("\\bTRUNC\\s*\\(\\s*([^,)]+)\\s*\\)", "DATE($1)"),
+            // TRUNC(number, n) → TRUNCATE()
+            FunctionReplacement("\\bTRUNC\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "TRUNCATE($1, $2)"),
+            // LISTAGG → GROUP_CONCAT
+            FunctionReplacement("\\bLISTAGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s*\\)\\s*WITHIN\\s+GROUP\\s*\\(\\s*ORDER\\s+BY\\s+([^)]+)\\s*\\)", "GROUP_CONCAT($1 ORDER BY $3 SEPARATOR $2)"),
+            FunctionReplacement("\\bLISTAGG\\s*\\(", "GROUP_CONCAT("),
+            // NULL 처리 함수
             FunctionReplacement("\\bNVL\\s*\\(", "IFNULL("),
-            FunctionReplacement("\\bSUBSTR\\s*\\(", "SUBSTRING("),
             FunctionReplacement("\\bNVL2\\s*\\(", "IF("),
-            FunctionReplacement("\\bDECODE\\s*\\(", "CASE ")
+            // 문자열 함수
+            FunctionReplacement("\\bSUBSTR\\s*\\(", "SUBSTRING("),
+            FunctionReplacement("\\bLENGTH\\s*\\(", "CHAR_LENGTH("),
+            FunctionReplacement("\\bLENGTHB\\s*\\(", "LENGTH("),
+            FunctionReplacement("\\bINSTR\\s*\\(", "LOCATE("),
+            // 수학 함수
+            FunctionReplacement("\\bMOD\\s*\\(", "MOD("),
+            FunctionReplacement("\\bPOWER\\s*\\(", "POW("),
+            FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\b", "RAND()"),
+            // DECODE → CASE (단순 변환, 완전한 변환은 별도 처리 필요)
+            FunctionReplacement("\\bDECODE\\s*\\(", "CASE "),
+            // 시퀀스 (MySQL 8.0+는 시퀀스 미지원, 경고 필요)
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.NEXTVAL", "NULL /* SEQUENCE $1.NEXTVAL not supported in MySQL */"),
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.CURRVAL", "NULL /* SEQUENCE $1.CURRVAL not supported in MySQL */"),
+            // DUAL 테이블 제거
+            FunctionReplacement("\\s+FROM\\s+DUAL\\b", ""),
+            // ROWNUM (단순 케이스)
+            FunctionReplacement("\\bROWNUM\\b", "@rownum := @rownum + 1")
         ),
 
         // Oracle → PostgreSQL
         DialectPair(DialectType.ORACLE, DialectType.POSTGRESQL) to listOf(
+            // 날짜/시간 함수
             FunctionReplacement("\\bSYSDATE\\b", "CURRENT_TIMESTAMP"),
-            FunctionReplacement("\\bNVL\\s*\\(", "COALESCE(")
+            FunctionReplacement("\\bSYSTIMESTAMP\\b", "CURRENT_TIMESTAMP"),
+            // TO_CHAR 유지 (PostgreSQL도 TO_CHAR 지원)
+            // TO_DATE 유지 (PostgreSQL도 TO_DATE 지원)
+            // ADD_MONTHS → + INTERVAL
+            FunctionReplacement("\\bADD_MONTHS\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1 + INTERVAL '$2 months')"),
+            // MONTHS_BETWEEN → EXTRACT/DATE_PART
+            FunctionReplacement("\\bMONTHS_BETWEEN\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "(EXTRACT(YEAR FROM $1) - EXTRACT(YEAR FROM $2)) * 12 + (EXTRACT(MONTH FROM $1) - EXTRACT(MONTH FROM $2))"),
+            // TRUNC(date) → DATE_TRUNC
+            FunctionReplacement("\\bTRUNC\\s*\\(\\s*([^,)]+)\\s*\\)", "DATE_TRUNC('day', $1)"),
+            // LISTAGG → STRING_AGG
+            FunctionReplacement("\\bLISTAGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s*\\)\\s*WITHIN\\s+GROUP\\s*\\(\\s*ORDER\\s+BY\\s+([^)]+)\\s*\\)", "STRING_AGG($1, $2 ORDER BY $3)"),
+            FunctionReplacement("\\bLISTAGG\\s*\\(", "STRING_AGG("),
+            // NULL 처리 함수
+            FunctionReplacement("\\bNVL\\s*\\(", "COALESCE("),
+            FunctionReplacement("\\bNVL2\\s*\\(\\s*([^,]+)\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "CASE WHEN $1 IS NOT NULL THEN $2 ELSE $3 END"),
+            // 문자열 함수
+            FunctionReplacement("\\bSUBSTR\\s*\\(", "SUBSTRING("),
+            FunctionReplacement("\\bLENGTH\\s*\\(", "LENGTH("),
+            FunctionReplacement("\\bINSTR\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "POSITION($2 IN $1)"),
+            // 문자열 연결 (||는 PostgreSQL도 지원하므로 그대로)
+            // 수학 함수
+            FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\b", "RANDOM()"),
+            FunctionReplacement("\\bDBMS_RANDOM\\.VALUE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1 + RANDOM() * ($2 - $1))"),
+            // DECODE → CASE
+            FunctionReplacement("\\bDECODE\\s*\\(", "CASE "),
+            // 시퀀스
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.NEXTVAL", "nextval('$1')"),
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\.CURRVAL", "currval('$1')"),
+            // DUAL 테이블 제거 (PostgreSQL은 FROM 절 없이 SELECT 가능)
+            FunctionReplacement("\\s+FROM\\s+DUAL\\b", ""),
+            // ROWNUM → ROW_NUMBER() (완전한 변환은 복잡)
+            FunctionReplacement("\\bROWNUM\\b", "ROW_NUMBER() OVER ()")
         ),
 
         // MySQL → PostgreSQL
@@ -34,28 +104,92 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\bCURDATE\\s*\\(\\s*\\)", "CURRENT_DATE"),
             FunctionReplacement("\\bCURTIME\\s*\\(\\s*\\)", "CURRENT_TIME"),
             FunctionReplacement("\\bUNIX_TIMESTAMP\\s*\\(\\s*\\)", "EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::INTEGER"),
+            FunctionReplacement("\\bUNIX_TIMESTAMP\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(EPOCH FROM $1)::INTEGER"),
             FunctionReplacement("\\bFROM_UNIXTIME\\s*\\(", "TO_TIMESTAMP("),
             FunctionReplacement("\\bDATE_FORMAT\\s*\\(", "TO_CHAR("),
             FunctionReplacement("\\bSTR_TO_DATE\\s*\\(", "TO_DATE("),
+            FunctionReplacement("\\bDATEDIFF\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1::DATE - $2::DATE)"),
+            FunctionReplacement("\\bDATE_ADD\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+([^)]+)\\s*\\)", "($1 + INTERVAL '$2')"),
+            FunctionReplacement("\\bDATE_SUB\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+([^)]+)\\s*\\)", "($1 - INTERVAL '$2')"),
+            FunctionReplacement("\\bYEAR\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(YEAR FROM $1)"),
+            FunctionReplacement("\\bMONTH\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(MONTH FROM $1)"),
+            FunctionReplacement("\\bDAY\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(DAY FROM $1)"),
+            FunctionReplacement("\\bHOUR\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(HOUR FROM $1)"),
+            FunctionReplacement("\\bMINUTE\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(MINUTE FROM $1)"),
+            FunctionReplacement("\\bSECOND\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(SECOND FROM $1)"),
+            FunctionReplacement("\\bDAYOFWEEK\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(DOW FROM $1)"),
+            FunctionReplacement("\\bDAYOFYEAR\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(DOY FROM $1)"),
+            FunctionReplacement("\\bWEEK\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(WEEK FROM $1)"),
             // 문자열 함수
             FunctionReplacement("\\bIFNULL\\s*\\(", "COALESCE("),
-            FunctionReplacement("\\bIF\\s*\\(", "CASE WHEN "),
+            FunctionReplacement("\\bIF\\s*\\(\\s*([^,]+)\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "CASE WHEN $1 THEN $2 ELSE $3 END"),
+            FunctionReplacement("\\bGROUP_CONCAT\\s*\\(\\s*([^)]+)\\s+ORDER\\s+BY\\s+([^)]+)\\s+SEPARATOR\\s+('[^']*')\\s*\\)", "STRING_AGG($1, $3 ORDER BY $2)"),
+            FunctionReplacement("\\bGROUP_CONCAT\\s*\\(\\s*([^)]+)\\s+SEPARATOR\\s+('[^']*')\\s*\\)", "STRING_AGG($1, $2)"),
             FunctionReplacement("\\bGROUP_CONCAT\\s*\\(", "STRING_AGG("),
-            FunctionReplacement("\\bLOCATE\\s*\\(", "POSITION("),
-            FunctionReplacement("\\bINSTR\\s*\\(", "POSITION("),
+            FunctionReplacement("\\bLOCATE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "POSITION($1 IN $2)"),
+            FunctionReplacement("\\bINSTR\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "POSITION($2 IN $1)"),
+            FunctionReplacement("\\bCONCAT_WS\\s*\\(", "CONCAT_WS("),
+            FunctionReplacement("\\bLEFT\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "LEFT($1, $2)"),
+            FunctionReplacement("\\bRIGHT\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "RIGHT($1, $2)"),
+            FunctionReplacement("\\bLPAD\\s*\\(", "LPAD("),
+            FunctionReplacement("\\bRPAD\\s*\\(", "RPAD("),
+            FunctionReplacement("\\bREVERSE\\s*\\(", "REVERSE("),
             // 수학 함수
             FunctionReplacement("\\bRAND\\s*\\(\\s*\\)", "RANDOM()"),
             FunctionReplacement("\\bTRUNCATE\\s*\\(", "TRUNC("),
+            FunctionReplacement("\\bCEIL\\s*\\(", "CEIL("),
+            FunctionReplacement("\\bFLOOR\\s*\\(", "FLOOR("),
+            FunctionReplacement("\\bROUND\\s*\\(", "ROUND("),
+            FunctionReplacement("\\bABS\\s*\\(", "ABS("),
+            FunctionReplacement("\\bSIGN\\s*\\(", "SIGN("),
             // 기타
-            FunctionReplacement("\\bLAST_INSERT_ID\\s*\\(\\s*\\)", "LASTVAL()")
+            FunctionReplacement("\\bLAST_INSERT_ID\\s*\\(\\s*\\)", "LASTVAL()"),
+            FunctionReplacement("\\bFOUND_ROWS\\s*\\(\\s*\\)", "(SELECT COUNT(*) FROM ...)"),
+            // LIMIT OFFSET 순서 (MySQL과 PostgreSQL 동일하므로 유지)
+            // AUTO_INCREMENT → SERIAL (DDL에서 처리)
+            // ENGINE= 제거
+            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", "")
         ),
 
         // MySQL → Oracle
         DialectPair(DialectType.MYSQL, DialectType.ORACLE) to listOf(
+            // 날짜/시간 함수
             FunctionReplacement("\\bNOW\\s*\\(\\s*\\)", "SYSDATE"),
+            FunctionReplacement("\\bCURDATE\\s*\\(\\s*\\)", "TRUNC(SYSDATE)"),
+            FunctionReplacement("\\bCURTIME\\s*\\(\\s*\\)", "TO_CHAR(SYSDATE, 'HH24:MI:SS')"),
+            FunctionReplacement("\\bDATE_FORMAT\\s*\\(", "TO_CHAR("),
+            FunctionReplacement("\\bSTR_TO_DATE\\s*\\(", "TO_DATE("),
+            FunctionReplacement("\\bDATE_ADD\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+(\\d+)\\s+MONTH\\s*\\)", "ADD_MONTHS($1, $2)"),
+            FunctionReplacement("\\bDATE_ADD\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+(\\d+)\\s+DAY\\s*\\)", "($1 + $2)"),
+            FunctionReplacement("\\bDATE_SUB\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+(\\d+)\\s+MONTH\\s*\\)", "ADD_MONTHS($1, -$2)"),
+            FunctionReplacement("\\bDATE_SUB\\s*\\(\\s*([^,]+)\\s*,\\s*INTERVAL\\s+(\\d+)\\s+DAY\\s*\\)", "($1 - $2)"),
+            FunctionReplacement("\\bDATEDIFF\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1 - $2)"),
+            FunctionReplacement("\\bYEAR\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(YEAR FROM $1)"),
+            FunctionReplacement("\\bMONTH\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(MONTH FROM $1)"),
+            FunctionReplacement("\\bDAY\\s*\\(\\s*([^)]+)\\s*\\)", "EXTRACT(DAY FROM $1)"),
+            // NULL 처리 함수
             FunctionReplacement("\\bIFNULL\\s*\\(", "NVL("),
             FunctionReplacement("\\bCOALESCE\\s*\\(", "NVL("),
-            FunctionReplacement("\\bSUBSTRING\\s*\\(", "SUBSTR(")
+            FunctionReplacement("\\bIF\\s*\\(\\s*([^,]+)\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "CASE WHEN $1 THEN $2 ELSE $3 END"),
+            // 문자열 함수
+            FunctionReplacement("\\bSUBSTRING\\s*\\(", "SUBSTR("),
+            FunctionReplacement("\\bCHAR_LENGTH\\s*\\(", "LENGTH("),
+            FunctionReplacement("\\bLENGTH\\s*\\(", "LENGTHB("),
+            FunctionReplacement("\\bLOCATE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "INSTR($2, $1)"),
+            FunctionReplacement("\\bGROUP_CONCAT\\s*\\(", "LISTAGG("),
+            FunctionReplacement("\\bCONCAT\\s*\\(([^)]+)\\)", "($1)"),
+            // 수학 함수
+            FunctionReplacement("\\bRAND\\s*\\(\\s*\\)", "DBMS_RANDOM.VALUE"),
+            FunctionReplacement("\\bTRUNCATE\\s*\\(", "TRUNC("),
+            FunctionReplacement("\\bPOW\\s*\\(", "POWER("),
+            FunctionReplacement("\\bMOD\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "MOD($1, $2)"),
+            // LIMIT → ROWNUM/FETCH (복잡한 변환 필요)
+            FunctionReplacement("\\bLIMIT\\s+(\\d+)\\s*$", "FETCH FIRST $1 ROWS ONLY"),
+            FunctionReplacement("\\bLIMIT\\s+(\\d+)\\s+OFFSET\\s+(\\d+)", "OFFSET $2 ROWS FETCH NEXT $1 ROWS ONLY"),
+            // AUTO_INCREMENT 제거 (Oracle은 IDENTITY 사용)
+            FunctionReplacement("\\bAUTO_INCREMENT\\b", "GENERATED ALWAYS AS IDENTITY"),
+            // ENGINE= 제거
+            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", "")
         ),
 
         // PostgreSQL → MySQL
@@ -64,28 +198,164 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\bCURRENT_TIMESTAMP\\b", "NOW()"),
             FunctionReplacement("\\bCURRENT_DATE\\b", "CURDATE()"),
             FunctionReplacement("\\bCURRENT_TIME\\b", "CURTIME()"),
+            FunctionReplacement("\\bNOW\\s*\\(\\s*\\)", "NOW()"),
             FunctionReplacement("\\bTO_CHAR\\s*\\(", "DATE_FORMAT("),
             FunctionReplacement("\\bTO_DATE\\s*\\(", "STR_TO_DATE("),
             FunctionReplacement("\\bTO_TIMESTAMP\\s*\\(", "FROM_UNIXTIME("),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*EPOCH\\s+FROM\\s+([^)]+)\\s*\\)", "UNIX_TIMESTAMP($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*YEAR\\s+FROM\\s+([^)]+)\\s*\\)", "YEAR($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*MONTH\\s+FROM\\s+([^)]+)\\s*\\)", "MONTH($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*DAY\\s+FROM\\s+([^)]+)\\s*\\)", "DAY($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*HOUR\\s+FROM\\s+([^)]+)\\s*\\)", "HOUR($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*MINUTE\\s+FROM\\s+([^)]+)\\s*\\)", "MINUTE($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*SECOND\\s+FROM\\s+([^)]+)\\s*\\)", "SECOND($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*DOW\\s+FROM\\s+([^)]+)\\s*\\)", "DAYOFWEEK($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*DOY\\s+FROM\\s+([^)]+)\\s*\\)", "DAYOFYEAR($1)"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*WEEK\\s+FROM\\s+([^)]+)\\s*\\)", "WEEK($1)"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'day'\\s*,\\s*([^)]+)\\s*\\)", "DATE($1)"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'month'\\s*,\\s*([^)]+)\\s*\\)", "DATE_FORMAT($1, '%Y-%m-01')"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'year'\\s*,\\s*([^)]+)\\s*\\)", "DATE_FORMAT($1, '%Y-01-01')"),
+            FunctionReplacement("\\bAGE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "TIMESTAMPDIFF(SECOND, $2, $1)"),
+            // INTERVAL 변환
+            FunctionReplacement("\\+\\s*INTERVAL\\s+'(\\d+)\\s+months?'", "+ INTERVAL $1 MONTH"),
+            FunctionReplacement("\\+\\s*INTERVAL\\s+'(\\d+)\\s+days?'", "+ INTERVAL $1 DAY"),
+            FunctionReplacement("\\+\\s*INTERVAL\\s+'(\\d+)\\s+hours?'", "+ INTERVAL $1 HOUR"),
+            FunctionReplacement("-\\s*INTERVAL\\s+'(\\d+)\\s+months?'", "- INTERVAL $1 MONTH"),
+            FunctionReplacement("-\\s*INTERVAL\\s+'(\\d+)\\s+days?'", "- INTERVAL $1 DAY"),
             // 문자열 함수
             FunctionReplacement("\\bCOALESCE\\s*\\(", "IFNULL("),
+            FunctionReplacement("\\bSTRING_AGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s+ORDER\\s+BY\\s+([^)]+)\\s*\\)", "GROUP_CONCAT($1 ORDER BY $3 SEPARATOR $2)"),
+            FunctionReplacement("\\bSTRING_AGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s*\\)", "GROUP_CONCAT($1 SEPARATOR $2)"),
             FunctionReplacement("\\bSTRING_AGG\\s*\\(", "GROUP_CONCAT("),
+            FunctionReplacement("\\bPOSITION\\s*\\(\\s*([^)]+)\\s+IN\\s+([^)]+)\\s*\\)", "LOCATE($1, $2)"),
+            FunctionReplacement("\\bSUBSTRING\\s*\\(\\s*([^,]+)\\s+FROM\\s+(\\d+)\\s+FOR\\s+(\\d+)\\s*\\)", "SUBSTRING($1, $2, $3)"),
+            FunctionReplacement("\\bSUBSTRING\\s*\\(\\s*([^,]+)\\s+FROM\\s+(\\d+)\\s*\\)", "SUBSTRING($1, $2)"),
+            FunctionReplacement("\\bLOWER\\s*\\(", "LOWER("),
+            FunctionReplacement("\\bUPPER\\s*\\(", "UPPER("),
+            FunctionReplacement("\\bTRIM\\s*\\(", "TRIM("),
+            FunctionReplacement("\\bLTRIM\\s*\\(", "LTRIM("),
+            FunctionReplacement("\\bRTRIM\\s*\\(", "RTRIM("),
+            FunctionReplacement("\\bLEFT\\s*\\(", "LEFT("),
+            FunctionReplacement("\\bRIGHT\\s*\\(", "RIGHT("),
+            FunctionReplacement("\\bLPAD\\s*\\(", "LPAD("),
+            FunctionReplacement("\\bRPAD\\s*\\(", "RPAD("),
+            FunctionReplacement("\\bREPLACE\\s*\\(", "REPLACE("),
+            FunctionReplacement("\\bREVERSE\\s*\\(", "REVERSE("),
+            // ILIKE → LIKE (MySQL은 기본적으로 대소문자 구분 안함)
+            FunctionReplacement("\\bILIKE\\b", "LIKE"),
+            FunctionReplacement("\\bNOT\\s+ILIKE\\b", "NOT LIKE"),
             // 수학 함수
             FunctionReplacement("\\bRANDOM\\s*\\(\\s*\\)", "RAND()"),
             FunctionReplacement("\\bTRUNC\\s*\\(", "TRUNCATE("),
+            FunctionReplacement("\\bCEIL\\s*\\(", "CEIL("),
+            FunctionReplacement("\\bFLOOR\\s*\\(", "FLOOR("),
+            FunctionReplacement("\\bROUND\\s*\\(", "ROUND("),
+            FunctionReplacement("\\bABS\\s*\\(", "ABS("),
+            FunctionReplacement("\\bSIGN\\s*\\(", "SIGN("),
+            FunctionReplacement("\\bPOWER\\s*\\(", "POW("),
+            FunctionReplacement("\\bSQRT\\s*\\(", "SQRT("),
+            FunctionReplacement("\\bLN\\s*\\(", "LOG("),
+            FunctionReplacement("\\bLOG\\s*\\(", "LOG10("),
+            FunctionReplacement("\\bEXP\\s*\\(", "EXP("),
             // 타입 캐스팅 제거
-            FunctionReplacement("::INTEGER\\b", ""),
-            FunctionReplacement("::TEXT\\b", ""),
-            FunctionReplacement("::VARCHAR\\b", ""),
-            FunctionReplacement("::NUMERIC\\b", ""),
-            FunctionReplacement("::TIMESTAMP\\b", "")
+            FunctionReplacement("::\\s*INTEGER\\b", ""),
+            FunctionReplacement("::\\s*BIGINT\\b", ""),
+            FunctionReplacement("::\\s*SMALLINT\\b", ""),
+            FunctionReplacement("::\\s*TEXT\\b", ""),
+            FunctionReplacement("::\\s*VARCHAR\\b", ""),
+            FunctionReplacement("::\\s*VARCHAR\\s*\\(\\d+\\)", ""),
+            FunctionReplacement("::\\s*CHAR\\s*\\(\\d+\\)", ""),
+            FunctionReplacement("::\\s*NUMERIC\\b", ""),
+            FunctionReplacement("::\\s*NUMERIC\\s*\\(\\d+\\s*,\\s*\\d+\\)", ""),
+            FunctionReplacement("::\\s*DECIMAL\\b", ""),
+            FunctionReplacement("::\\s*FLOAT\\b", ""),
+            FunctionReplacement("::\\s*DOUBLE PRECISION\\b", ""),
+            FunctionReplacement("::\\s*REAL\\b", ""),
+            FunctionReplacement("::\\s*TIMESTAMP\\b", ""),
+            FunctionReplacement("::\\s*DATE\\b", ""),
+            FunctionReplacement("::\\s*TIME\\b", ""),
+            FunctionReplacement("::\\s*BOOLEAN\\b", ""),
+            FunctionReplacement("::\\s*JSONB?\\b", ""),
+            FunctionReplacement("::\\s*BYTEA\\b", ""),
+            // RETURNING 제거 (MySQL 5.x 미지원)
+            FunctionReplacement("\\s+RETURNING\\s+.*$", " /* RETURNING not supported */"),
+            // ARRAY 구문 제거
+            FunctionReplacement("\\bARRAY\\s*\\[", "JSON_ARRAY("),
+            FunctionReplacement("\\]", ")")
         ),
 
         // PostgreSQL → Oracle
         DialectPair(DialectType.POSTGRESQL, DialectType.ORACLE) to listOf(
+            // 날짜/시간 함수
             FunctionReplacement("\\bCURRENT_TIMESTAMP\\b", "SYSDATE"),
+            FunctionReplacement("\\bCURRENT_DATE\\b", "TRUNC(SYSDATE)"),
+            FunctionReplacement("\\bCURRENT_TIME\\b", "TO_CHAR(SYSDATE, 'HH24:MI:SS')"),
+            FunctionReplacement("\\bNOW\\s*\\(\\s*\\)", "SYSDATE"),
+            FunctionReplacement("\\bEXTRACT\\s*\\(\\s*EPOCH\\s+FROM\\s+([^)]+)\\s*\\)", "(($1 - DATE '1970-01-01') * 86400)"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'day'\\s*,\\s*([^)]+)\\s*\\)", "TRUNC($1)"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'month'\\s*,\\s*([^)]+)\\s*\\)", "TRUNC($1, 'MM')"),
+            FunctionReplacement("\\bDATE_TRUNC\\s*\\(\\s*'year'\\s*,\\s*([^)]+)\\s*\\)", "TRUNC($1, 'YYYY')"),
+            FunctionReplacement("\\bAGE\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "($1 - $2)"),
+            // INTERVAL 변환
+            FunctionReplacement("\\+\\s*INTERVAL\\s+'(\\d+)\\s+months?'", "+ NUMTOYMINTERVAL($1, 'MONTH')"),
+            FunctionReplacement("\\+\\s*INTERVAL\\s+'(\\d+)\\s+days?'", "+ $1"),
+            FunctionReplacement("-\\s*INTERVAL\\s+'(\\d+)\\s+months?'", "- NUMTOYMINTERVAL($1, 'MONTH')"),
+            FunctionReplacement("-\\s*INTERVAL\\s+'(\\d+)\\s+days?'", "- $1"),
+            // NULL 처리 함수
             FunctionReplacement("\\bCOALESCE\\s*\\(", "NVL("),
-            FunctionReplacement("\\bRANDOM\\s*\\(\\s*\\)", "DBMS_RANDOM.VALUE")
+            FunctionReplacement("\\bNULLIF\\s*\\(", "NULLIF("),
+            // 문자열 함수
+            FunctionReplacement("\\bSTRING_AGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s+ORDER\\s+BY\\s+([^)]+)\\s*\\)", "LISTAGG($1, $2) WITHIN GROUP (ORDER BY $3)"),
+            FunctionReplacement("\\bSTRING_AGG\\s*\\(\\s*([^,]+)\\s*,\\s*('[^']*')\\s*\\)", "LISTAGG($1, $2) WITHIN GROUP (ORDER BY 1)"),
+            FunctionReplacement("\\bSTRING_AGG\\s*\\(", "LISTAGG("),
+            FunctionReplacement("\\bSUBSTRING\\s*\\(\\s*([^,]+)\\s+FROM\\s+(\\d+)\\s+FOR\\s+(\\d+)\\s*\\)", "SUBSTR($1, $2, $3)"),
+            FunctionReplacement("\\bSUBSTRING\\s*\\(\\s*([^,]+)\\s+FROM\\s+(\\d+)\\s*\\)", "SUBSTR($1, $2)"),
+            FunctionReplacement("\\bSUBSTRING\\s*\\(", "SUBSTR("),
+            FunctionReplacement("\\bPOSITION\\s*\\(\\s*([^)]+)\\s+IN\\s+([^)]+)\\s*\\)", "INSTR($2, $1)"),
+            FunctionReplacement("\\bLENGTH\\s*\\(", "LENGTH("),
+            FunctionReplacement("\\bCHAR_LENGTH\\s*\\(", "LENGTH("),
+            FunctionReplacement("\\bLOWER\\s*\\(", "LOWER("),
+            FunctionReplacement("\\bUPPER\\s*\\(", "UPPER("),
+            FunctionReplacement("\\bTRIM\\s*\\(", "TRIM("),
+            FunctionReplacement("\\bLTRIM\\s*\\(", "LTRIM("),
+            FunctionReplacement("\\bRTRIM\\s*\\(", "RTRIM("),
+            FunctionReplacement("\\bLPAD\\s*\\(", "LPAD("),
+            FunctionReplacement("\\bRPAD\\s*\\(", "RPAD("),
+            FunctionReplacement("\\bREPLACE\\s*\\(", "REPLACE("),
+            // 수학 함수
+            FunctionReplacement("\\bRANDOM\\s*\\(\\s*\\)", "DBMS_RANDOM.VALUE"),
+            FunctionReplacement("\\bTRUNC\\s*\\(", "TRUNC("),
+            FunctionReplacement("\\bCEIL\\s*\\(", "CEIL("),
+            FunctionReplacement("\\bFLOOR\\s*\\(", "FLOOR("),
+            FunctionReplacement("\\bROUND\\s*\\(", "ROUND("),
+            FunctionReplacement("\\bABS\\s*\\(", "ABS("),
+            FunctionReplacement("\\bSIGN\\s*\\(", "SIGN("),
+            FunctionReplacement("\\bPOWER\\s*\\(", "POWER("),
+            FunctionReplacement("\\bSQRT\\s*\\(", "SQRT("),
+            FunctionReplacement("\\bLN\\s*\\(", "LN("),
+            FunctionReplacement("\\bLOG\\s*\\(", "LOG(10, "),
+            FunctionReplacement("\\bEXP\\s*\\(", "EXP("),
+            FunctionReplacement("\\bMOD\\s*\\(", "MOD("),
+            // 타입 캐스팅 → TO_NUMBER/TO_CHAR
+            FunctionReplacement("::\\s*INTEGER\\b", ""),
+            FunctionReplacement("::\\s*BIGINT\\b", ""),
+            FunctionReplacement("::\\s*SMALLINT\\b", ""),
+            FunctionReplacement("::\\s*TEXT\\b", ""),
+            FunctionReplacement("::\\s*VARCHAR\\b", ""),
+            FunctionReplacement("::\\s*NUMERIC\\b", ""),
+            FunctionReplacement("::\\s*TIMESTAMP\\b", ""),
+            FunctionReplacement("::\\s*DATE\\b", ""),
+            // 시퀀스
+            FunctionReplacement("\\bnextval\\s*\\(\\s*'([^']+)'\\s*\\)", "$1.NEXTVAL"),
+            FunctionReplacement("\\bcurrval\\s*\\(\\s*'([^']+)'\\s*\\)", "$1.CURRVAL"),
+            // LIMIT → FETCH FIRST
+            FunctionReplacement("\\bLIMIT\\s+(\\d+)\\s*$", "FETCH FIRST $1 ROWS ONLY"),
+            FunctionReplacement("\\bLIMIT\\s+(\\d+)\\s+OFFSET\\s+(\\d+)", "OFFSET $2 ROWS FETCH NEXT $1 ROWS ONLY"),
+            // RETURNING → RETURNING INTO (Oracle은 다른 문법)
+            FunctionReplacement("\\s+RETURNING\\s+", " RETURNING "),
+            // BOOLEAN → NUMBER(1)
+            FunctionReplacement("\\bTRUE\\b", "1"),
+            FunctionReplacement("\\bFALSE\\b", "0")
         )
     )
 

@@ -1,20 +1,27 @@
 # Build stage
-FROM gradle:8.10.2-jdk21 AS builder
+FROM --platform=linux/amd64 eclipse-temurin:21-jdk AS builder
 
 WORKDIR /app
 
+# Install gradle
+RUN apt-get update && apt-get install -y wget unzip && \
+    wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip && \
+    unzip -q gradle-8.5-bin.zip && \
+    rm gradle-8.5-bin.zip
+
+ENV PATH="/app/gradle-8.5/bin:${PATH}"
+
 # Copy all build files
-COPY build.gradle.kts ./
-COPY gradlew gradlew.bat ./
+COPY build.gradle.kts settings.gradle* ./
 
 # Copy source code
 COPY src ./src
 
-# Build application (gradle will download dependencies automatically)
+# Build application
 RUN gradle bootJar --no-daemon
 
 # Runtime stage
-FROM openjdk:21-ea-slim
+FROM --platform=linux/amd64 eclipse-temurin:21-jre
 
 WORKDIR /app
 

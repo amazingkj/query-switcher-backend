@@ -143,16 +143,35 @@ class StringBasedDataTypeConverter {
                 }
             },
             SimpleDataTypeReplacement("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", "DECIMAL($1,$2)"),
+            SimpleDataTypeReplacement("\\bNUMBER\\b", "DECIMAL"),
             SimpleDataTypeReplacement("\\bVARCHAR2\\s*\\(", "VARCHAR("),
+            SimpleDataTypeReplacement("\\bNVARCHAR2\\s*\\(", "VARCHAR("),
+            SimpleDataTypeReplacement("\\bNCHAR\\s*\\(", "CHAR("),
+            SimpleDataTypeReplacement("\\bCHAR\\s*\\(", "CHAR("),
             SimpleDataTypeReplacement("\\bCLOB\\b", "LONGTEXT"),
+            SimpleDataTypeReplacement("\\bNCLOB\\b", "LONGTEXT"),
             SimpleDataTypeReplacement("\\bBLOB\\b", "LONGBLOB"),
+            SimpleDataTypeReplacement("\\bLONG\\s+RAW\\b", "LONGBLOB"),
+            SimpleDataTypeReplacement("\\bLONG\\b", "LONGTEXT"),
+            SimpleDataTypeReplacement("\\bRAW\\s*\\(\\s*(\\d+)\\s*\\)", "VARBINARY($1)"),
             SimpleDataTypeReplacement("\\bDATE\\b", "DATETIME"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s+WITH\\s+LOCAL\\s+TIME\\s+ZONE\\b", "DATETIME"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s+WITH\\s+TIME\\s+ZONE\\b", "DATETIME"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s*\\(\\s*(\\d+)\\s*\\)", "DATETIME($1)"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\b", "DATETIME"),
+            SimpleDataTypeReplacement("\\bINTERVAL\\s+YEAR.*?TO\\s+MONTH\\b", "VARCHAR(30)"),
+            SimpleDataTypeReplacement("\\bINTERVAL\\s+DAY.*?TO\\s+SECOND\\b", "VARCHAR(30)"),
             DynamicDataTypeReplacement("\\bFLOAT\\s*\\(\\s*(\\d+)\\s*\\)") { match ->
                 val precision = match.groupValues[1].toInt()
                 if (precision <= 24) "FLOAT" else "DOUBLE"
             },
+            SimpleDataTypeReplacement("\\bFLOAT\\b", "DOUBLE"),
             SimpleDataTypeReplacement("\\bBINARY_FLOAT\\b", "FLOAT"),
-            SimpleDataTypeReplacement("\\bBINARY_DOUBLE\\b", "DOUBLE")
+            SimpleDataTypeReplacement("\\bBINARY_DOUBLE\\b", "DOUBLE"),
+            SimpleDataTypeReplacement("\\bBFILE\\b", "VARCHAR(255)"),
+            SimpleDataTypeReplacement("\\bROWID\\b", "VARCHAR(18)"),
+            SimpleDataTypeReplacement("\\bUROWID\\b", "VARCHAR(4000)"),
+            SimpleDataTypeReplacement("\\bXMLTYPE\\b", "LONGTEXT")
         )
 
         // Oracle → PostgreSQL 변환 규칙
@@ -166,15 +185,34 @@ class StringBasedDataTypeConverter {
                 }
             },
             SimpleDataTypeReplacement("\\bNUMBER\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)", "NUMERIC($1,$2)"),
+            SimpleDataTypeReplacement("\\bNUMBER\\b", "NUMERIC"),
             SimpleDataTypeReplacement("\\bVARCHAR2\\s*\\(", "VARCHAR("),
+            SimpleDataTypeReplacement("\\bNVARCHAR2\\s*\\(", "VARCHAR("),
+            SimpleDataTypeReplacement("\\bNCHAR\\s*\\(", "CHAR("),
+            SimpleDataTypeReplacement("\\bCHAR\\s*\\(", "CHAR("),
             SimpleDataTypeReplacement("\\bCLOB\\b", "TEXT"),
+            SimpleDataTypeReplacement("\\bNCLOB\\b", "TEXT"),
             SimpleDataTypeReplacement("\\bBLOB\\b", "BYTEA"),
+            SimpleDataTypeReplacement("\\bLONG\\s+RAW\\b", "BYTEA"),
+            SimpleDataTypeReplacement("\\bLONG\\b", "TEXT"),
+            SimpleDataTypeReplacement("\\bRAW\\s*\\(\\s*(\\d+)\\s*\\)", "BYTEA"),
+            SimpleDataTypeReplacement("\\bDATE\\b", "TIMESTAMP"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s+WITH\\s+LOCAL\\s+TIME\\s+ZONE\\b", "TIMESTAMPTZ"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s+WITH\\s+TIME\\s+ZONE\\b", "TIMESTAMPTZ"),
+            SimpleDataTypeReplacement("\\bTIMESTAMP\\s*\\(\\s*(\\d+)\\s*\\)", "TIMESTAMP($1)"),
+            SimpleDataTypeReplacement("\\bINTERVAL\\s+YEAR.*?TO\\s+MONTH\\b", "INTERVAL"),
+            SimpleDataTypeReplacement("\\bINTERVAL\\s+DAY.*?TO\\s+SECOND\\b", "INTERVAL"),
             DynamicDataTypeReplacement("\\bFLOAT\\s*\\(\\s*(\\d+)\\s*\\)") { match ->
                 val precision = match.groupValues[1].toInt()
                 if (precision <= 24) "REAL" else "DOUBLE PRECISION"
             },
+            SimpleDataTypeReplacement("\\bFLOAT\\b", "DOUBLE PRECISION"),
             SimpleDataTypeReplacement("\\bBINARY_FLOAT\\b", "REAL"),
-            SimpleDataTypeReplacement("\\bBINARY_DOUBLE\\b", "DOUBLE PRECISION")
+            SimpleDataTypeReplacement("\\bBINARY_DOUBLE\\b", "DOUBLE PRECISION"),
+            SimpleDataTypeReplacement("\\bBFILE\\b", "VARCHAR(255)"),
+            SimpleDataTypeReplacement("\\bROWID\\b", "VARCHAR(18)"),
+            SimpleDataTypeReplacement("\\bUROWID\\b", "VARCHAR(4000)"),
+            SimpleDataTypeReplacement("\\bXMLTYPE\\b", "XML")
         )
 
         // MySQL → PostgreSQL 변환 규칙
