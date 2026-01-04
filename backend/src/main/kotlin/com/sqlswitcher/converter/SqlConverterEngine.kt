@@ -1,9 +1,15 @@
 package com.sqlswitcher.converter
 
+import com.sqlswitcher.converter.error.ConversionErrorHandler
 import com.sqlswitcher.converter.feature.PackageConversionService
+import com.sqlswitcher.converter.feature.function.CteConverter
+import com.sqlswitcher.converter.feature.function.HierarchicalQueryConverter
+import com.sqlswitcher.converter.feature.function.PivotUnpivotConverter
+import com.sqlswitcher.converter.feature.function.WindowFunctionConverter
 import com.sqlswitcher.converter.preprocessor.OracleSyntaxPreprocessor
 import com.sqlswitcher.converter.stringbased.StringBasedFunctionConverter
 import com.sqlswitcher.converter.stringbased.StringBasedDataTypeConverter
+import com.sqlswitcher.converter.validation.SqlValidationService
 import com.sqlswitcher.parser.SqlParserService
 import com.sqlswitcher.service.SqlMetricsService
 import com.sqlswitcher.model.ConversionOptions as ModelConversionOptions
@@ -30,7 +36,8 @@ class SqlConverterEngine(
     private val packageConversionService: PackageConversionService,
     private val oracleSyntaxPreprocessor: OracleSyntaxPreprocessor,
     private val stringBasedFunctionConverter: StringBasedFunctionConverter,
-    private val stringBasedDataTypeConverter: StringBasedDataTypeConverter
+    private val stringBasedDataTypeConverter: StringBasedDataTypeConverter,
+    private val sqlValidationService: SqlValidationService
 ) {
     private val dialectMap: ConcurrentHashMap<DialectType, DatabaseDialect> = ConcurrentHashMap()
 
@@ -115,8 +122,7 @@ class SqlConverterEngine(
                 appliedRules = appliedRules.distinct()
             )
         } catch (e: Exception) {
-            val endTime = System.currentTimeMillis()
-            val duration = endTime - startTime
+            @Suppress("UNUSED_VARIABLE") val endTime = System.currentTimeMillis()
 
             warnings.add(createWarning(
                 type = WarningType.UNSUPPORTED_FUNCTION,
@@ -142,7 +148,7 @@ class SqlConverterEngine(
         sql: String,
         sourceDialectType: DialectType,
         targetDialectType: DialectType,
-        modelOptions: ModelConversionOptions?,
+        @Suppress("UNUSED_PARAMETER") modelOptions: ModelConversionOptions?,
         warnings: MutableList<ConversionWarning>,
         appliedRules: MutableList<String>,
         startTime: Long
@@ -182,7 +188,7 @@ class SqlConverterEngine(
         // 2. 소스 및 타겟 방언 구현체 가져오기
         val sourceDialect = dialectMap[sourceDialectType]
             ?: throw IllegalArgumentException("Unsupported source dialect: $sourceDialectType")
-        val targetDialect = dialectMap[targetDialectType]
+        @Suppress("UNUSED_VARIABLE") val targetDialect = dialectMap[targetDialectType]
             ?: throw IllegalArgumentException("Unsupported target dialect: $targetDialectType")
 
         // 3. 변환 가능 여부 확인 (선택 사항)
@@ -311,9 +317,35 @@ class SqlConverterEngine(
         // Oracle 특화 문법 전처리 (별도 컴포넌트로 위임)
         convertedSql = oracleSyntaxPreprocessor.preprocess(convertedSql, targetDialectType, warnings, appliedRules)
 
+        // PIVOT/UNPIVOT 변환
+        convertedSql = PivotUnpivotConverter.convert(
+            convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+        )
+
+        // 계층형 쿼리 변환 (CONNECT BY → WITH RECURSIVE)
+        convertedSql = HierarchicalQueryConverter.convert(
+            convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+        )
+
+        // CTE(WITH 절) 변환
+        convertedSql = CteConverter.convert(
+            convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+        )
+
+        // 윈도우 함수 변환
+        convertedSql = WindowFunctionConverter.convert(
+            convertedSql, sourceDialectType, targetDialectType, warnings, appliedRules
+        )
+
         // 함수/데이터타입 변환 (별도 컴포넌트로 위임)
         convertedSql = stringBasedFunctionConverter.convert(convertedSql, sourceDialectType, targetDialectType, appliedRules)
         convertedSql = stringBasedDataTypeConverter.convert(convertedSql, sourceDialectType, targetDialectType, appliedRules)
+
+        // 변환 결과 검증
+        val validationWarnings = sqlValidationService.validateConversion(
+            sql, convertedSql, sourceDialectType, targetDialectType
+        )
+        warnings.addAll(validationWarnings)
 
         val endTime = System.currentTimeMillis()
         sqlMetricsService.recordConversionDuration(endTime - startTime, sourceDialectType.name, targetDialectType.name)

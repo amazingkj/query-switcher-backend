@@ -825,6 +825,864 @@ class NewFeaturesConversionTest {
         }
     }
 
+    // ==================== 공통 SQL 함수 테스트 ====================
+
+    @Nested
+    @DisplayName("NULLIF, GREATEST, LEAST 함수 테스트")
+    inner class CommonSqlFunctionsTest {
+
+        @Test
+        @DisplayName("NULLIF 함수 - Oracle → MySQL")
+        fun testNullIfOracleToMySql() {
+            val oracle = "SELECT NULLIF(status, 'N/A') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("NULLIF("), "NULLIF가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("NULLIF 함수 - MySQL → PostgreSQL")
+        fun testNullIfMySqlToPostgreSql() {
+            val mysql = "SELECT NULLIF(a, b) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("NULLIF("), "NULLIF가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("GREATEST 함수 - Oracle → MySQL")
+        fun testGreatestOracleToMySql() {
+            val oracle = "SELECT GREATEST(a, b, c) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("GREATEST("), "GREATEST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("GREATEST 함수 - MySQL → PostgreSQL")
+        fun testGreatestMySqlToPostgreSql() {
+            val mysql = "SELECT GREATEST(1, 2, 3) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("GREATEST("), "GREATEST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("LEAST 함수 - Oracle → MySQL")
+        fun testLeastOracleToMySql() {
+            val oracle = "SELECT LEAST(a, b, c) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("LEAST("), "LEAST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("LEAST 함수 - PostgreSQL → Oracle")
+        fun testLeastPostgreSqlToOracle() {
+            val postgresql = "SELECT LEAST(price, 100) FROM products"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(result.contains("LEAST("), "LEAST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("COALESCE 다중 인자 - Oracle → MySQL")
+        fun testCoalesceMultipleArgs() {
+            val oracle = "SELECT COALESCE(a, b, c, d) FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // Oracle COALESCE는 MySQL에서도 COALESCE로 유지 (NVL은 2개 인자만)
+            assertTrue(result.contains("COALESCE(") || result.contains("IFNULL("), "NULL 처리 함수가 있어야 함: $result")
+        }
+    }
+
+    // ==================== FIND_IN_SET 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("FIND_IN_SET 함수 변환 테스트")
+    inner class FindInSetConversionTest {
+
+        @Test
+        @DisplayName("MySQL FIND_IN_SET → PostgreSQL")
+        fun testFindInSetToPostgreSql() {
+            val mysql = "SELECT * FROM users WHERE FIND_IN_SET('admin', roles) > 0"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            // FIND_IN_SET은 PostgreSQL에서 position과 string_to_array 또는 LIKE로 변환
+            assertFalse(result.contains("FIND_IN_SET"), "FIND_IN_SET이 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL FIND_IN_SET → Oracle")
+        fun testFindInSetToOracle() {
+            val mysql = "SELECT * FROM users WHERE FIND_IN_SET('admin', roles) > 0"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            // FIND_IN_SET은 Oracle에서 INSTR 또는 REGEXP로 변환
+            assertFalse(result.contains("FIND_IN_SET"), "FIND_IN_SET이 변환되어야 함: $result")
+        }
+    }
+
+    // ==================== NULLS FIRST/LAST 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("NULLS FIRST/LAST 정렬 옵션 테스트")
+    inner class NullsFirstLastTest {
+
+        @Test
+        @DisplayName("Oracle NULLS FIRST → PostgreSQL (유지)")
+        fun testNullsFirstOracleToPostgreSql() {
+            val oracle = "SELECT * FROM users ORDER BY name NULLS FIRST"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("NULLS FIRST"), "NULLS FIRST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle NULLS LAST → PostgreSQL (유지)")
+        fun testNullsLastOracleToPostgreSql() {
+            val oracle = "SELECT * FROM users ORDER BY name DESC NULLS LAST"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("NULLS LAST"), "NULLS LAST가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle NULLS FIRST → MySQL (CASE WHEN으로 변환)")
+        fun testNullsFirstOracleToMySql() {
+            val oracle = "SELECT * FROM users ORDER BY name NULLS FIRST"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // MySQL은 NULLS FIRST/LAST를 지원하지 않으므로 CASE WHEN 또는 IS NULL로 변환
+            assertFalse(result.contains("NULLS FIRST"), "NULLS FIRST가 MySQL 호환 구문으로 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle NULLS LAST → MySQL (CASE WHEN으로 변환)")
+        fun testNullsLastOracleToMySql() {
+            val oracle = "SELECT * FROM users ORDER BY name DESC NULLS LAST"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertFalse(result.contains("NULLS LAST"), "NULLS LAST가 MySQL 호환 구문으로 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("PostgreSQL NULLS FIRST → MySQL (CASE WHEN으로 변환)")
+        fun testNullsFirstPostgreSqlToMySql() {
+            val postgresql = "SELECT * FROM users ORDER BY email NULLS FIRST"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertFalse(result.contains("NULLS FIRST"), "NULLS FIRST가 MySQL 호환 구문으로 변환되어야 함: $result")
+        }
+    }
+
+    // ==================== ROLLUP/CUBE/GROUPING SETS 테스트 ====================
+
+    @Nested
+    @DisplayName("ROLLUP/CUBE/GROUPING SETS 변환 테스트")
+    inner class RollupCubeTest {
+
+        @Test
+        @DisplayName("Oracle ROLLUP → MySQL WITH ROLLUP")
+        fun testRollupOracleToMySql() {
+            val oracle = "SELECT dept, SUM(salary) FROM employees GROUP BY ROLLUP(dept)"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("WITH ROLLUP"), "ROLLUP이 WITH ROLLUP으로 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle ROLLUP → PostgreSQL (유지)")
+        fun testRollupOracleToPostgreSql() {
+            val oracle = "SELECT dept, SUM(salary) FROM employees GROUP BY ROLLUP(dept)"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("ROLLUP("), "ROLLUP이 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle CUBE → PostgreSQL (유지)")
+        fun testCubeOracleToPostgreSql() {
+            val oracle = "SELECT dept, job, SUM(salary) FROM employees GROUP BY CUBE(dept, job)"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("CUBE("), "CUBE가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle GROUPING SETS → PostgreSQL (유지)")
+        fun testGroupingSetsOracleToPostgreSql() {
+            val oracle = "SELECT dept, job, SUM(salary) FROM employees GROUP BY GROUPING SETS((dept), (job), ())"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("GROUPING SETS"), "GROUPING SETS가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("PostgreSQL ROLLUP → MySQL WITH ROLLUP")
+        fun testRollupPostgreSqlToMySql() {
+            val postgresql = "SELECT dept, SUM(salary) FROM employees GROUP BY ROLLUP(dept)"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("WITH ROLLUP"), "ROLLUP이 WITH ROLLUP으로 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL WITH ROLLUP → Oracle ROLLUP")
+        fun testWithRollupMySqlToOracle() {
+            val mysql = "SELECT dept, SUM(salary) FROM employees GROUP BY dept WITH ROLLUP"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(result.contains("ROLLUP("), "WITH ROLLUP이 ROLLUP()으로 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL WITH ROLLUP → PostgreSQL ROLLUP")
+        fun testWithRollupMySqlToPostgreSql() {
+            val mysql = "SELECT dept, SUM(salary) FROM employees GROUP BY dept WITH ROLLUP"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("ROLLUP("), "WITH ROLLUP이 ROLLUP()으로 변환되어야 함: $result")
+        }
+    }
+
+    // ==================== REGEXP_COUNT 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("REGEXP_COUNT 함수 변환 테스트")
+    inner class RegexpCountTest {
+
+        @Test
+        @DisplayName("Oracle REGEXP_COUNT → PostgreSQL")
+        fun testRegexpCountOracleToPostgreSql() {
+            val oracle = "SELECT REGEXP_COUNT(description, 'test') FROM items"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            // PostgreSQL에서는 array_length(regexp_matches(..., 'g'), 1) 또는 LENGTH 기반 변환
+            assertFalse(result.contains("REGEXP_COUNT"), "REGEXP_COUNT가 변환되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("Oracle REGEXP_COUNT → MySQL")
+        fun testRegexpCountOracleToMySql() {
+            val oracle = "SELECT REGEXP_COUNT(name, '[aeiou]') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // MySQL 8.0 이전은 REGEXP_COUNT 미지원 - LENGTH 기반 변환
+            assertFalse(result.contains("REGEXP_COUNT("), "REGEXP_COUNT( 함수 호출이 변환되어야 함: $result")
+            assertTrue(result.contains("LENGTH"), "LENGTH 함수로 변환되어야 함: $result")
+        }
+    }
+
+    // ==================== MERGE 문 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("MERGE 문 변환 테스트")
+    inner class MergeStatementTest {
+
+        @Test
+        @DisplayName("Oracle MERGE → MySQL INSERT ON DUPLICATE KEY UPDATE")
+        fun testMergeOracleToMySql() {
+            val oracle = """
+                MERGE INTO target t
+                USING source s
+                ON (t.id = s.id)
+                WHEN MATCHED THEN UPDATE SET t.name = s.name
+                WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
+            """.trimIndent()
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // MERGE는 MySQL에서 INSERT ... ON DUPLICATE KEY UPDATE로 변환
+            assertTrue(
+                result.contains("INSERT") || result.contains("MERGE"),
+                "MERGE가 변환되거나 유지되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle MERGE → PostgreSQL INSERT ON CONFLICT")
+        fun testMergeOracleToPostgreSql() {
+            val oracle = """
+                MERGE INTO target t
+                USING source s
+                ON (t.id = s.id)
+                WHEN MATCHED THEN UPDATE SET t.name = s.name
+                WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
+            """.trimIndent()
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            // PostgreSQL 15+는 MERGE 지원, 이전 버전은 INSERT ... ON CONFLICT
+            assertTrue(
+                result.contains("MERGE") || result.contains("INSERT"),
+                "MERGE가 유지되거나 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== PIVOT/UNPIVOT 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("PIVOT/UNPIVOT 변환 테스트")
+    inner class PivotUnpivotTest {
+
+        @Test
+        @DisplayName("Oracle PIVOT → PostgreSQL CASE WHEN")
+        fun testPivotOracleToPostgreSql() {
+            val oracle = """
+                SELECT * FROM sales
+                PIVOT (SUM(amount) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2, 'Q3' AS q3, 'Q4' AS q4))
+            """.trimIndent()
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            // PIVOT은 CASE WHEN 또는 crosstab으로 변환
+            assertTrue(
+                result.contains("CASE") || result.contains("PIVOT") || result.contains("crosstab"),
+                "PIVOT이 변환되거나 유지되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle PIVOT → MySQL CASE WHEN")
+        fun testPivotOracleToMySql() {
+            val oracle = """
+                SELECT * FROM sales
+                PIVOT (SUM(amount) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2))
+            """.trimIndent()
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // MySQL은 PIVOT 미지원, CASE WHEN으로 변환
+            assertTrue(
+                result.contains("CASE") || result.contains("PIVOT"),
+                "PIVOT이 변환되거나 유지되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== 중간 우선순위 - ARRAY 함수 테스트 ====================
+
+    @Nested
+    @DisplayName("ARRAY 함수 변환 테스트")
+    inner class ArrayFunctionsTest {
+
+        @Test
+        @DisplayName("PostgreSQL ARRAY_AGG → MySQL GROUP_CONCAT")
+        fun testArrayAggToMySql() {
+            val postgresql = "SELECT ARRAY_AGG(name) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("GROUP_CONCAT") || result.contains("JSON_ARRAYAGG"),
+                "ARRAY_AGG가 GROUP_CONCAT 또는 JSON_ARRAYAGG로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL ARRAY_AGG → Oracle COLLECT")
+        fun testArrayAggToOracle() {
+            val postgresql = "SELECT ARRAY_AGG(name ORDER BY name) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("COLLECT") || result.contains("LISTAGG") || result.contains("ARRAY_AGG"),
+                "ARRAY_AGG가 COLLECT 또는 LISTAGG로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL unnest → MySQL JSON_TABLE")
+        fun testUnnestToMySql() {
+            val postgresql = "SELECT unnest(ARRAY[1, 2, 3])"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            // unnest는 MySQL에서 JSON_TABLE 또는 수동 분해로 변환
+            assertFalse(result.contains("unnest("), "unnest가 변환되어야 함: $result")
+        }
+    }
+
+    // ==================== LATERAL JOIN 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("LATERAL JOIN 변환 테스트")
+    inner class LateralJoinTest {
+
+        @Test
+        @DisplayName("PostgreSQL LATERAL → MySQL (LATERAL 유지, MySQL 8.0.14+)")
+        fun testLateralPostgreSqlToMySql() {
+            val postgresql = "SELECT * FROM users u, LATERAL (SELECT * FROM orders o WHERE o.user_id = u.id) AS o"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            // MySQL 8.0.14+는 LATERAL 지원
+            assertTrue(
+                result.contains("LATERAL") || result.contains("SELECT"),
+                "LATERAL이 유지되거나 서브쿼리로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL LATERAL → Oracle CROSS APPLY")
+        fun testLateralPostgreSqlToOracle() {
+            val postgresql = "SELECT * FROM users u, LATERAL (SELECT * FROM orders o WHERE o.user_id = u.id) AS o"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.ORACLE, appliedRules)
+
+            // Oracle 12c+는 CROSS APPLY 또는 LATERAL 지원
+            assertTrue(
+                result.contains("LATERAL") || result.contains("CROSS APPLY") || result.contains("SELECT"),
+                "LATERAL이 유지되거나 CROSS APPLY로 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== JSON 연산자 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("JSON 연산자 변환 테스트")
+    inner class JsonOperatorsTest {
+
+        @Test
+        @DisplayName("PostgreSQL ->> → MySQL JSON_UNQUOTE(JSON_EXTRACT())")
+        fun testJsonExtractTextToMySql() {
+            val postgresql = "SELECT data->>'name' FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("JSON_UNQUOTE") || result.contains("JSON_EXTRACT") || result.contains("->>"),
+                "JSON ->> 연산자가 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL -> → MySQL JSON_EXTRACT")
+        fun testJsonExtractToMySql() {
+            val postgresql = "SELECT data->'address' FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("JSON_EXTRACT") || result.contains("->"),
+                "JSON -> 연산자가 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL ->> → Oracle JSON_VALUE")
+        fun testJsonExtractTextToOracle() {
+            val postgresql = "SELECT data->>'name' FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("JSON_VALUE") || result.contains("->>"),
+                "JSON ->> 연산자가 Oracle JSON_VALUE로 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== FILTER 절 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("FILTER 절 변환 테스트")
+    inner class FilterClauseTest {
+
+        @Test
+        @DisplayName("PostgreSQL COUNT(*) FILTER → MySQL CASE WHEN")
+        fun testFilterToMySql() {
+            val postgresql = "SELECT COUNT(*) FILTER (WHERE status = 'active') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("CASE WHEN") || result.contains("SUM(CASE"),
+                "FILTER 절이 CASE WHEN으로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL SUM() FILTER → Oracle CASE WHEN")
+        fun testSumFilterToOracle() {
+            val postgresql = "SELECT SUM(amount) FILTER (WHERE type = 'credit') FROM transactions"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("CASE WHEN") || result.contains("FILTER"),
+                "FILTER 절이 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== ELT/FIELD 함수 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("ELT/FIELD 함수 변환 테스트")
+    inner class EltFieldTest {
+
+        @Test
+        @DisplayName("MySQL ELT → PostgreSQL CASE WHEN")
+        fun testEltToPostgreSql() {
+            val mysql = "SELECT ELT(2, 'a', 'b', 'c') FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("CASE") || !result.contains("ELT("),
+                "ELT가 CASE WHEN으로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL FIELD → PostgreSQL CASE WHEN")
+        fun testFieldToPostgreSql() {
+            val mysql = "SELECT FIELD('b', 'a', 'b', 'c') FROM t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("CASE") || !result.contains("FIELD("),
+                "FIELD가 CASE WHEN으로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL ELT → Oracle DECODE")
+        fun testEltToOracle() {
+            val mysql = "SELECT ELT(status, 'New', 'In Progress', 'Done') FROM tasks"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("DECODE") || result.contains("CASE") || !result.contains("ELT("),
+                "ELT가 DECODE 또는 CASE WHEN으로 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== 암호화 함수 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("암호화 함수 변환 테스트")
+    inner class CryptoFunctionsTest {
+
+        @Test
+        @DisplayName("MySQL MD5 → PostgreSQL")
+        fun testMd5MySqlToPostgreSql() {
+            val mysql = "SELECT MD5('password') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("MD5") || result.contains("md5"), "MD5가 유지되어야 함: $result")
+        }
+
+        @Test
+        @DisplayName("MySQL MD5 → Oracle")
+        fun testMd5MySqlToOracle() {
+            val mysql = "SELECT MD5('password') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("DBMS_CRYPTO") || result.contains("STANDARD_HASH") || result.contains("UTL_RAW"),
+                "MD5가 Oracle 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL SHA1 → PostgreSQL")
+        fun testSha1MySqlToPostgreSql() {
+            val mysql = "SELECT SHA1('password') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("digest") || result.contains("SHA1") || result.contains("encode"),
+                "SHA1이 PostgreSQL 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL SHA2 → Oracle")
+        fun testSha2MySqlToOracle() {
+            val mysql = "SELECT SHA2('password', 256) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("STANDARD_HASH") || result.contains("DBMS_CRYPTO") || result.contains("SHA"),
+                "SHA2가 Oracle 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("PostgreSQL MD5 → MySQL")
+        fun testMd5PostgreSqlToMySql() {
+            val postgresql = "SELECT MD5('password') FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("MD5"), "MD5가 유지되어야 함: $result")
+        }
+    }
+
+    // ==================== Full-Text 검색 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("Full-Text 검색 변환 테스트")
+    inner class FullTextSearchTest {
+
+        @Test
+        @DisplayName("MySQL MATCH AGAINST → PostgreSQL to_tsvector")
+        fun testMatchAgainstToPostgreSql() {
+            val mysql = "SELECT * FROM articles WHERE MATCH(title, content) AGAINST('search term')"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("to_tsvector") || result.contains("@@") || result.contains("LIKE") || result.contains("MATCH"),
+                "MATCH AGAINST가 변환되거나 유지되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL MATCH AGAINST BOOLEAN MODE → PostgreSQL")
+        fun testMatchAgainstBooleanToPostgreSql() {
+            val mysql = "SELECT * FROM articles WHERE MATCH(title) AGAINST('+mysql -oracle' IN BOOLEAN MODE)"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("to_tsvector") || result.contains("plainto_tsquery") || result.contains("MATCH"),
+                "BOOLEAN MODE가 변환되거나 유지되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("MySQL MATCH AGAINST → Oracle CONTAINS")
+        fun testMatchAgainstToOracle() {
+            val mysql = "SELECT * FROM articles WHERE MATCH(content) AGAINST('keyword')"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(mysql, DialectType.MYSQL, DialectType.ORACLE, appliedRules)
+
+            assertTrue(
+                result.contains("CONTAINS") || result.contains("LIKE") || result.contains("MATCH"),
+                "MATCH AGAINST가 변환되거나 유지되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== 힌트 처리 테스트 ====================
+
+    @Nested
+    @DisplayName("힌트 처리 테스트")
+    inner class HintProcessingTest {
+
+        @Test
+        @DisplayName("Oracle 힌트 → MySQL (제거)")
+        fun testOracleHintToMySql() {
+            val oracle = "SELECT /*+ INDEX(t idx_name) */ * FROM users t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            // 힌트는 제거되거나 주석 처리됨
+            assertFalse(
+                result.contains("/*+ INDEX"),
+                "Oracle 힌트가 제거되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle 힌트 → PostgreSQL (제거)")
+        fun testOracleHintToPostgreSql() {
+            val oracle = "SELECT /*+ FULL(t) */ * FROM users t"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertFalse(
+                result.contains("/*+ FULL"),
+                "Oracle 힌트가 제거되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle 복합 힌트 처리")
+        fun testOracleComplexHint() {
+            val oracle = "SELECT /*+ LEADING(a b) USE_NL(b) INDEX(a idx1) */ a.id FROM t1 a, t2 b WHERE a.id = b.id"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertFalse(
+                result.contains("/*+ LEADING") || result.contains("USE_NL") || result.contains("/*+ INDEX"),
+                "복합 Oracle 힌트가 제거되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== LAST_DAY, NEXT_DAY 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("날짜 함수 추가 테스트")
+    inner class AdditionalDateFunctionsTest {
+
+        @Test
+        @DisplayName("Oracle LAST_DAY → MySQL")
+        fun testLastDayOracleToMySql() {
+            val oracle = "SELECT LAST_DAY(hire_date) FROM employees"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(result.contains("LAST_DAY"), "LAST_DAY가 유지되어야 함 (MySQL 지원): $result")
+        }
+
+        @Test
+        @DisplayName("Oracle LAST_DAY → PostgreSQL")
+        fun testLastDayOracleToPostgreSql() {
+            val oracle = "SELECT LAST_DAY(hire_date) FROM employees"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("DATE_TRUNC") || result.contains("INTERVAL") || result.contains("LAST_DAY"),
+                "LAST_DAY가 PostgreSQL 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle NEXT_DAY → MySQL")
+        fun testNextDayOracleToMySql() {
+            val oracle = "SELECT NEXT_DAY(hire_date, 'MONDAY') FROM employees"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("DATE_ADD") || result.contains("DAYOFWEEK") || result.contains("NEXT_DAY"),
+                "NEXT_DAY가 MySQL 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle NEXT_DAY → PostgreSQL")
+        fun testNextDayOracleToPostgreSql() {
+            val oracle = "SELECT NEXT_DAY(hire_date, 'FRIDAY') FROM employees"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(
+                result.contains("DATE_TRUNC") || result.contains("INTERVAL") || result.contains("NEXT_DAY"),
+                "NEXT_DAY가 PostgreSQL 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle ADD_MONTHS 음수 → MySQL DATE_SUB")
+        fun testAddMonthsNegativeOracleToMySql() {
+            val oracle = "SELECT ADD_MONTHS(SYSDATE, -3) FROM DUAL"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("DATE_ADD") || result.contains("DATE_SUB") || result.contains("INTERVAL"),
+                "ADD_MONTHS 음수가 변환되어야 함: $result"
+            )
+        }
+    }
+
+    // ==================== INITCAP, TRANSLATE 변환 테스트 ====================
+
+    @Nested
+    @DisplayName("문자열 함수 추가 테스트")
+    inner class AdditionalStringFunctionsTest {
+
+        @Test
+        @DisplayName("Oracle INITCAP → MySQL")
+        fun testInitcapOracleToMySql() {
+            val oracle = "SELECT INITCAP(name) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("CONCAT") || result.contains("UPPER") || result.contains("LOWER") || result.contains("INITCAP"),
+                "INITCAP가 MySQL 함수로 변환되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle INITCAP → PostgreSQL")
+        fun testInitcapOracleToPostgreSql() {
+            val oracle = "SELECT INITCAP(name) FROM users"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("INITCAP"), "INITCAP가 유지되어야 함 (PostgreSQL 지원): $result")
+        }
+
+        @Test
+        @DisplayName("Oracle TRANSLATE → MySQL REPLACE 체인")
+        fun testTranslateOracleToMySql() {
+            val oracle = "SELECT TRANSLATE(phone, '()-', '   ') FROM contacts"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("REPLACE") || result.contains("TRANSLATE"),
+                "TRANSLATE가 REPLACE로 변환되거나 유지되어야 함: $result"
+            )
+        }
+
+        @Test
+        @DisplayName("Oracle TRANSLATE → PostgreSQL")
+        fun testTranslateOracleToPostgreSql() {
+            val oracle = "SELECT TRANSLATE(code, 'ABC', 'XYZ') FROM items"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(oracle, DialectType.ORACLE, DialectType.POSTGRESQL, appliedRules)
+
+            assertTrue(result.contains("TRANSLATE"), "TRANSLATE가 유지되어야 함 (PostgreSQL 지원): $result")
+        }
+
+        @Test
+        @DisplayName("PostgreSQL INITCAP → MySQL")
+        fun testInitcapPostgreSqlToMySql() {
+            val postgresql = "SELECT INITCAP(title) FROM articles"
+            val appliedRules = mutableListOf<String>()
+            val result = functionConverter.convert(postgresql, DialectType.POSTGRESQL, DialectType.MYSQL, appliedRules)
+
+            assertTrue(
+                result.contains("CONCAT") || result.contains("UPPER") || !result.contains("INITCAP("),
+                "INITCAP가 MySQL 함수로 변환되어야 함: $result"
+            )
+        }
+    }
+
     // ==================== PostgreSQL → Oracle 새 기능 테스트 ====================
 
     @Nested

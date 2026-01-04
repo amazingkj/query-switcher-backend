@@ -1,13 +1,194 @@
 package com.sqlswitcher.converter
 
+import com.sqlswitcher.converter.stringbased.StringBasedFunctionConverter
 import com.sqlswitcher.converter.util.SqlRegexPatterns
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.DisplayName
 import kotlin.system.measureTimeMillis
+import kotlin.test.assertTrue
 
 /**
  * 대용량 SQL 변환 성능 테스트
  */
 class PerformanceTest {
+
+    private lateinit var functionConverter: StringBasedFunctionConverter
+
+    @BeforeEach
+    fun setup() {
+        functionConverter = StringBasedFunctionConverter()
+    }
+
+    @Nested
+    @DisplayName("StringBasedFunctionConverter 성능 테스트")
+    inner class FunctionConverterPerformanceTest {
+
+        @Test
+        @DisplayName("작은 SQL (100자 미만) 변환 성능")
+        fun testSmallSqlPerformance() {
+            val sql = "SELECT NVL(name, 'Unknown') FROM employees WHERE ROWNUM < 10"
+            val appliedRules = mutableListOf<String>()
+
+            val time = measureTimeMillis {
+                repeat(1000) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.MYSQL, appliedRules.toMutableList())
+                }
+            }
+
+            println("작은 SQL 1000회 변환 시간: ${time}ms (평균: ${time / 1000.0}ms)")
+            assertTrue(time < 5000, "작은 SQL 1000회 변환은 5초 이내여야 합니다")
+        }
+
+        @Test
+        @DisplayName("중간 SQL (500자) 변환 성능")
+        fun testMediumSqlPerformance() {
+            val sql = buildMediumFunctionSql()
+            val appliedRules = mutableListOf<String>()
+
+            val time = measureTimeMillis {
+                repeat(100) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.MYSQL, appliedRules.toMutableList())
+                }
+            }
+
+            println("중간 SQL 100회 변환 시간: ${time}ms (평균: ${time / 100.0}ms)")
+            assertTrue(time < 5000, "중간 SQL 100회 변환은 5초 이내여야 합니다")
+        }
+
+        @Test
+        @DisplayName("대형 SQL (2000자) 변환 성능")
+        fun testLargeSqlPerformance() {
+            val sql = buildLargeFunctionSql()
+            val appliedRules = mutableListOf<String>()
+
+            val time = measureTimeMillis {
+                repeat(50) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.MYSQL, appliedRules.toMutableList())
+                }
+            }
+
+            println("대형 SQL 50회 변환 시간: ${time}ms (평균: ${time / 50.0}ms)")
+            assertTrue(time < 10000, "대형 SQL 50회 변환은 10초 이내여야 합니다")
+        }
+
+        @Test
+        @DisplayName("중첩 DECODE가 많은 SQL 성능")
+        fun testMultipleDecodePerformance() {
+            val sql = buildMultipleDecodeSql()
+            val appliedRules = mutableListOf<String>()
+
+            val time = measureTimeMillis {
+                repeat(50) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.MYSQL, appliedRules.toMutableList())
+                }
+            }
+
+            println("다중 DECODE SQL 50회 변환 시간: ${time}ms (평균: ${time / 50.0}ms)")
+            assertTrue(time < 5000, "다중 DECODE SQL 50회 변환은 5초 이내여야 합니다")
+        }
+
+        @Test
+        @DisplayName("다이얼렉트별 변환 성능 비교")
+        fun testDialectComparisonPerformance() {
+            val sql = buildMediumFunctionSql()
+            val iterations = 100
+
+            val oracleToMySql = measureTimeMillis {
+                repeat(iterations) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.MYSQL, mutableListOf())
+                }
+            }
+
+            val oracleToPostgres = measureTimeMillis {
+                repeat(iterations) {
+                    functionConverter.convert(sql, DialectType.ORACLE, DialectType.POSTGRESQL, mutableListOf())
+                }
+            }
+
+            val mySqlToPostgres = measureTimeMillis {
+                val mySql = buildMySqlFunctionSql()
+                repeat(iterations) {
+                    functionConverter.convert(mySql, DialectType.MYSQL, DialectType.POSTGRESQL, mutableListOf())
+                }
+            }
+
+            println("=== 다이얼렉트별 변환 성능 (${iterations}회) ===")
+            println("Oracle → MySQL: ${oracleToMySql}ms (평균: ${oracleToMySql / iterations.toDouble()}ms)")
+            println("Oracle → PostgreSQL: ${oracleToPostgres}ms (평균: ${oracleToPostgres / iterations.toDouble()}ms)")
+            println("MySQL → PostgreSQL: ${mySqlToPostgres}ms (평균: ${mySqlToPostgres / iterations.toDouble()}ms)")
+        }
+
+        private fun buildMediumFunctionSql(): String = """
+            SELECT
+                NVL(e.name, 'Unknown') AS employee_name,
+                TO_CHAR(e.hire_date, 'YYYY-MM-DD') AS formatted_date,
+                DECODE(e.status, 'A', 'Active', 'I', 'Inactive', 'Unknown') AS status_text,
+                SUBSTR(e.description, 1, 100) AS short_desc,
+                MONTHS_BETWEEN(SYSDATE, e.hire_date) AS months_employed
+            FROM employees e
+            WHERE e.department_id IN (10, 20, 30)
+              AND ROWNUM < 100
+            ORDER BY e.name
+        """.trimIndent()
+
+        private fun buildLargeFunctionSql(): String = """
+            SELECT
+                e.employee_id,
+                NVL(e.first_name, 'N/A') || ' ' || NVL(e.last_name, 'N/A') AS full_name,
+                TO_CHAR(e.hire_date, 'YYYY-MM-DD HH24:MI:SS') AS hire_datetime,
+                DECODE(e.status, 'A', 'Active', 'I', 'Inactive', 'T', 'Terminated', 'P', 'Pending', 'Unknown') AS status_desc,
+                NVL2(e.manager_id, (SELECT m.first_name FROM employees m WHERE m.employee_id = e.manager_id), 'No Manager') AS manager_name,
+                ROUND(e.salary * 1.1, 2) AS projected_salary,
+                TRUNC(MONTHS_BETWEEN(SYSDATE, e.hire_date)) AS tenure_months,
+                DECODE(TRUNC(MONTHS_BETWEEN(SYSDATE, e.hire_date) / 12),
+                    0, 'New',
+                    1, '1 Year',
+                    2, '2 Years',
+                    'Senior') AS tenure_category,
+                LISTAGG(p.project_name, ', ') WITHIN GROUP (ORDER BY p.start_date) AS projects,
+                ADD_MONTHS(e.hire_date, 12) AS review_date,
+                CASE WHEN e.commission_pct IS NOT NULL THEN e.salary * (1 + e.commission_pct) ELSE e.salary END AS total_comp
+            FROM employees e
+            LEFT JOIN employee_projects ep ON e.employee_id = ep.employee_id
+            LEFT JOIN projects p ON ep.project_id = p.project_id
+            WHERE e.department_id IN (
+                SELECT department_id FROM departments WHERE location_id IN (1000, 1100, 1200)
+            )
+            GROUP BY e.employee_id, e.first_name, e.last_name, e.hire_date, e.status, e.manager_id, e.salary, e.commission_pct
+            HAVING COUNT(p.project_id) >= 2
+            ORDER BY tenure_months DESC, full_name
+        """.trimIndent()
+
+        private fun buildMultipleDecodeSql(): String {
+            val decodes = (1..15).map { i ->
+                "DECODE(field$i, 'A', 'ValueA$i', 'B', 'ValueB$i', 'C', 'ValueC$i', 'D', 'ValueD$i', 'Default$i') AS decoded$i"
+            }.joinToString(",\n            ")
+
+            return """
+                SELECT
+                    id,
+                    $decodes
+                FROM multi_decode_table
+                WHERE status = 'ACTIVE'
+            """.trimIndent()
+        }
+
+        private fun buildMySqlFunctionSql(): String = """
+            SELECT
+                IFNULL(name, 'Unknown') AS name,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS formatted_date,
+                IF(status = 'A', 'Active', 'Inactive') AS status_text,
+                GROUP_CONCAT(tag ORDER BY tag SEPARATOR ', ') AS tags,
+                DATEDIFF(NOW(), created_at) AS days_old
+            FROM users u
+            JOIN user_tags ut ON u.id = ut.user_id
+            WHERE u.active = 1
+            GROUP BY u.id
+            LIMIT 100
+        """.trimIndent()
+    }
 
     @Test
     fun `정규식 캐싱 성능 비교 테스트`() {

@@ -122,7 +122,19 @@ class StringBasedFunctionConverter {
             // DUAL 테이블 제거
             FunctionReplacement("\\s+FROM\\s+DUAL\\b", ""),
             // ROWNUM (단순 케이스)
-            FunctionReplacement("\\bROWNUM\\b", "@rownum := @rownum + 1")
+            FunctionReplacement("\\bROWNUM\\b", "@rownum := @rownum + 1"),
+            // REGEXP_COUNT → MySQL 8.0+ 지원하지만, 이전 버전을 위한 대체
+            FunctionReplacement("\\bREGEXP_COUNT\\s*\\(\\s*([^,]+)\\s*,\\s*'([^']+)'\\s*\\)", "(LENGTH($1) - LENGTH(REPLACE($1, '$2', ''))) / LENGTH('$2') /* REGEXP_COUNT approximation */"),
+            // Oracle 힌트 제거
+            FunctionReplacement("/\\*\\+[^*]+\\*/", "/* hint removed */"),
+            // MD5 → MySQL 지원
+            FunctionReplacement("\\bUTL_RAW\\.CAST_TO_RAW\\s*\\(\\s*([^)]+)\\s*\\)", "$1"),
+            // INITCAP → MySQL 미지원 (주석 처리)
+            FunctionReplacement("\\bINITCAP\\s*\\(\\s*([^)]+)\\s*\\)", "CONCAT(UPPER(LEFT($1, 1)), LOWER(SUBSTRING($1, 2))) /* INITCAP */"),
+            // TRANSLATE → REPLACE 체인 (단순화)
+            FunctionReplacement("\\bTRANSLATE\\s*\\(", "REPLACE( /* TRANSLATE */ "),
+            // NEXT_DAY → MySQL 변환
+            FunctionReplacement("\\bNEXT_DAY\\s*\\(\\s*([^,]+)\\s*,\\s*'([^']+)'\\s*\\)", "DATE_ADD($1, INTERVAL (7 - DAYOFWEEK($1) + 1) DAY) /* NEXT_DAY approximation */")
         ),
 
         // Oracle → PostgreSQL
@@ -159,7 +171,15 @@ class StringBasedFunctionConverter {
             // DUAL 테이블 제거 (PostgreSQL은 FROM 절 없이 SELECT 가능)
             FunctionReplacement("\\s+FROM\\s+DUAL\\b", ""),
             // ROWNUM → ROW_NUMBER() (완전한 변환은 복잡)
-            FunctionReplacement("\\bROWNUM\\b", "ROW_NUMBER() OVER ()")
+            FunctionReplacement("\\bROWNUM\\b", "ROW_NUMBER() OVER ()"),
+            // REGEXP_COUNT → LENGTH 기반 변환 (정규식 매칭 횟수)
+            FunctionReplacement("\\bREGEXP_COUNT\\s*\\(\\s*([^,]+)\\s*,\\s*'([^']+)'\\s*\\)", "(LENGTH($1) - LENGTH(REGEXP_REPLACE($1, '$2', '', 'g'))) / LENGTH('$2')"),
+            // Oracle 힌트 제거
+            FunctionReplacement("/\\*\\+[^*]+\\*/", "/* hint removed */"),
+            // LAST_DAY → PostgreSQL 변환
+            FunctionReplacement("\\bLAST_DAY\\s*\\(\\s*([^)]+)\\s*\\)", "(DATE_TRUNC('month', $1) + INTERVAL '1 month' - INTERVAL '1 day')::DATE"),
+            // NEXT_DAY → PostgreSQL 변환
+            FunctionReplacement("\\bNEXT_DAY\\s*\\(\\s*([^,]+)\\s*,\\s*'([^']+)'\\s*\\)", "($1 + INTERVAL '1 day' * ((7 + EXTRACT(DOW FROM DATE '$2') - EXTRACT(DOW FROM $1)) % 7)) /* NEXT_DAY approximation */")
         ),
 
         // MySQL → PostgreSQL
@@ -213,7 +233,26 @@ class StringBasedFunctionConverter {
             // LIMIT OFFSET 순서 (MySQL과 PostgreSQL 동일하므로 유지)
             // AUTO_INCREMENT → SERIAL (DDL에서 처리)
             // ENGINE= 제거
-            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", "")
+            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", ""),
+            // FIND_IN_SET → position과 string_to_array
+            FunctionReplacement("\\bFIND_IN_SET\\s*\\(\\s*'([^']+)'\\s*,\\s*([^)]+)\\s*\\)", "(POSITION('$1' IN $2) > 0)::INTEGER"),
+            FunctionReplacement("\\bFIND_IN_SET\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "(POSITION($1 IN $2) > 0)::INTEGER"),
+            // ELT → CASE WHEN
+            FunctionReplacement("\\bELT\\s*\\(\\s*(\\d+)\\s*,\\s*([^)]+)\\s*\\)", "(ARRAY[$2])[$1]"),
+            // FIELD → array_position
+            FunctionReplacement("\\bFIELD\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "COALESCE(array_position(ARRAY[$2], $1), 0)"),
+            // SHA1 → PostgreSQL digest
+            FunctionReplacement("\\bSHA1\\s*\\(\\s*([^)]+)\\s*\\)", "encode(digest($1, 'sha1'), 'hex')"),
+            FunctionReplacement("\\bSHA\\s*\\(\\s*([^)]+)\\s*\\)", "encode(digest($1, 'sha1'), 'hex')"),
+            // SHA2 → PostgreSQL digest
+            FunctionReplacement("\\bSHA2\\s*\\(\\s*([^,]+)\\s*,\\s*256\\s*\\)", "encode(digest($1, 'sha256'), 'hex')"),
+            FunctionReplacement("\\bSHA2\\s*\\(\\s*([^,]+)\\s*,\\s*512\\s*\\)", "encode(digest($1, 'sha512'), 'hex')"),
+            // MATCH AGAINST → to_tsvector (기본 변환)
+            FunctionReplacement("\\bMATCH\\s*\\(([^)]+)\\)\\s*AGAINST\\s*\\('([^']+)'\\s*\\)", "to_tsvector($1) @@ plainto_tsquery('$2')"),
+            FunctionReplacement("\\bMATCH\\s*\\(([^)]+)\\)\\s*AGAINST\\s*\\('([^']+)'\\s+IN\\s+BOOLEAN\\s+MODE\\s*\\)", "to_tsvector($1) @@ to_tsquery('$2')"),
+            // INITCAP 유지 (PostgreSQL 지원)
+            // LAST_DAY → PostgreSQL
+            FunctionReplacement("\\bLAST_DAY\\s*\\(\\s*([^)]+)\\s*\\)", "(DATE_TRUNC('month', $1) + INTERVAL '1 month' - INTERVAL '1 day')::DATE")
         ),
 
         // MySQL → Oracle
@@ -254,7 +293,28 @@ class StringBasedFunctionConverter {
             // AUTO_INCREMENT 제거 (Oracle은 IDENTITY 사용)
             FunctionReplacement("\\bAUTO_INCREMENT\\b", "GENERATED ALWAYS AS IDENTITY"),
             // ENGINE= 제거
-            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", "")
+            FunctionReplacement("\\s*ENGINE\\s*=\\s*\\w+", ""),
+            // FIND_IN_SET → INSTR 기반 변환
+            FunctionReplacement("\\bFIND_IN_SET\\s*\\(\\s*'([^']+)'\\s*,\\s*([^)]+)\\s*\\)", "INSTR(',' || $2 || ',', ',$1,')"),
+            FunctionReplacement("\\bFIND_IN_SET\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "INSTR(',' || $2 || ',', ',' || $1 || ',')"),
+            // ELT → DECODE (Oracle)
+            FunctionReplacement("\\bELT\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "DECODE($1, 1, $2) /* ELT approximation */"),
+            // FIELD → DECODE 기반 변환
+            FunctionReplacement("\\bFIELD\\s*\\(\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)", "INSTR(',' || $2 || ',', ',' || $1 || ',') /* FIELD approximation */"),
+            // MD5 → Oracle STANDARD_HASH
+            FunctionReplacement("\\bMD5\\s*\\(\\s*([^)]+)\\s*\\)", "LOWER(RAWTOHEX(STANDARD_HASH($1, 'MD5')))"),
+            // SHA1/SHA → Oracle STANDARD_HASH
+            FunctionReplacement("\\bSHA1\\s*\\(\\s*([^)]+)\\s*\\)", "LOWER(RAWTOHEX(STANDARD_HASH($1, 'SHA1')))"),
+            FunctionReplacement("\\bSHA\\s*\\(\\s*([^)]+)\\s*\\)", "LOWER(RAWTOHEX(STANDARD_HASH($1, 'SHA1')))"),
+            // SHA2 → Oracle STANDARD_HASH
+            FunctionReplacement("\\bSHA2\\s*\\(\\s*([^,]+)\\s*,\\s*256\\s*\\)", "LOWER(RAWTOHEX(STANDARD_HASH($1, 'SHA256')))"),
+            FunctionReplacement("\\bSHA2\\s*\\(\\s*([^,]+)\\s*,\\s*512\\s*\\)", "LOWER(RAWTOHEX(STANDARD_HASH($1, 'SHA512')))"),
+            // MATCH AGAINST → Oracle CONTAINS
+            FunctionReplacement("\\bMATCH\\s*\\(([^)]+)\\)\\s*AGAINST\\s*\\('([^']+)'[^)]*\\)", "CONTAINS($1, '$2') > 0"),
+            // INITCAP → Oracle 지원
+            // LAST_DAY → Oracle 지원 (유지)
+            // TRANSLATE → Oracle 지원 (유지)
+            FunctionReplacement("\\bTRANSLATE\\s*\\(", "TRANSLATE(")
         ),
 
         // PostgreSQL → MySQL
@@ -346,7 +406,23 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\s+RETURNING\\s+.*$", " /* RETURNING not supported */"),
             // ARRAY 구문 제거
             FunctionReplacement("\\bARRAY\\s*\\[", "JSON_ARRAY("),
-            FunctionReplacement("\\]", ")")
+            FunctionReplacement("\\]", ")"),
+            // ARRAY_AGG → GROUP_CONCAT
+            FunctionReplacement("\\bARRAY_AGG\\s*\\(\\s*([^)]+)\\s+ORDER\\s+BY\\s+([^)]+)\\s*\\)", "GROUP_CONCAT($1 ORDER BY $2)"),
+            FunctionReplacement("\\bARRAY_AGG\\s*\\(", "GROUP_CONCAT("),
+            // unnest → JSON_TABLE 또는 주석 처리
+            FunctionReplacement("\\bunnest\\s*\\(\\s*ARRAY\\s*\\[([^\\]]+)\\]\\s*\\)", "JSON_TABLE(JSON_ARRAY($1), '\$[*]' COLUMNS(value VARCHAR(255) PATH '\$')) /* unnest */"),
+            FunctionReplacement("\\bunnest\\s*\\(", "/* unnest not directly supported */ ("),
+            // JSON 연산자 ->> → JSON_UNQUOTE(JSON_EXTRACT())
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\s*->>\\s*'([^']+)'", "JSON_UNQUOTE(JSON_EXTRACT(\$1, '\\\$.\$2'))"),
+            // JSON 연산자 -> → JSON_EXTRACT()
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\s*->\\s*'([^']+)'", "JSON_EXTRACT(\$1, '\\\$.\$2')"),
+            // FILTER 절 → CASE WHEN
+            FunctionReplacement("(COUNT|SUM|AVG|MIN|MAX)\\s*\\(\\s*([^)]+)\\s*\\)\\s*FILTER\\s*\\(\\s*WHERE\\s+([^)]+)\\s*\\)", "$1(CASE WHEN $3 THEN $2 END)"),
+            // INITCAP → MySQL 변환
+            FunctionReplacement("\\bINITCAP\\s*\\(\\s*([^)]+)\\s*\\)", "CONCAT(UPPER(LEFT($1, 1)), LOWER(SUBSTRING($1, 2))) /* INITCAP */"),
+            // TRANSLATE → REPLACE (단순화, 완전 변환은 복잡)
+            FunctionReplacement("\\bTRANSLATE\\s*\\(", "REPLACE( /* TRANSLATE */")
         ),
 
         // PostgreSQL → Oracle
@@ -420,7 +496,18 @@ class StringBasedFunctionConverter {
             FunctionReplacement("\\s+RETURNING\\s+", " RETURNING "),
             // BOOLEAN → NUMBER(1)
             FunctionReplacement("\\bTRUE\\b", "1"),
-            FunctionReplacement("\\bFALSE\\b", "0")
+            FunctionReplacement("\\bFALSE\\b", "0"),
+            // ARRAY_AGG → COLLECT 또는 LISTAGG
+            FunctionReplacement("\\bARRAY_AGG\\s*\\(\\s*([^)]+)\\s+ORDER\\s+BY\\s+([^)]+)\\s*\\)", "LISTAGG($1, ',') WITHIN GROUP (ORDER BY $2)"),
+            FunctionReplacement("\\bARRAY_AGG\\s*\\(", "COLLECT("),
+            // unnest → TABLE 함수
+            FunctionReplacement("\\bunnest\\s*\\(", "TABLE("),
+            // JSON 연산자 ->> → JSON_VALUE
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\s*->>\\s*'([^']+)'", "JSON_VALUE(\$1, '\\\$.\$2')"),
+            // JSON 연산자 -> → JSON_QUERY
+            FunctionReplacement("([A-Za-z_][A-Za-z0-9_]*)\\s*->\\s*'([^']+)'", "JSON_QUERY(\$1, '\\\$.\$2')"),
+            // FILTER 절 → CASE WHEN
+            FunctionReplacement("(COUNT|SUM|AVG|MIN|MAX)\\s*\\(\\s*([^)]+)\\s*\\)\\s*FILTER\\s*\\(\\s*WHERE\\s+([^)]+)\\s*\\)", "$1(CASE WHEN $3 THEN $2 END)")
         )
     )
 
@@ -490,11 +577,148 @@ class StringBasedFunctionConverter {
         // 5. 날짜 포맷 문자열 변환
         result = convertDateFormats(result, sourceDialect, targetDialect, appliedRules)
 
+        // 6. NULLS FIRST/LAST 변환 (Oracle/PostgreSQL → MySQL)
+        if (targetDialect == DialectType.MYSQL) {
+            val beforeNulls = result
+            result = convertNullsFirstLast(result)
+            if (result != beforeNulls) {
+                appliedRules.add("NULLS FIRST/LAST → MySQL 호환 구문 변환")
+                hasChanges = true
+            }
+        }
+
+        // 7. ROLLUP/CUBE 변환
+        result = convertRollupCube(result, sourceDialect, targetDialect, appliedRules)
+
+        // 8. WITH ROLLUP 변환 (MySQL → Oracle/PostgreSQL)
+        if (sourceDialect == DialectType.MYSQL && targetDialect != DialectType.MYSQL) {
+            val beforeRollup = result
+            result = convertWithRollup(result)
+            if (result != beforeRollup) {
+                appliedRules.add("WITH ROLLUP → ROLLUP() 변환")
+                hasChanges = true
+            }
+        }
+
         if (hasChanges) {
             appliedRules.add("${sourceDialect.name} → ${targetDialect.name} 함수 변환")
         }
 
         return result
+    }
+
+    /**
+     * NULLS FIRST/LAST를 MySQL 호환 구문으로 변환
+     * ORDER BY col NULLS FIRST → ORDER BY col IS NULL DESC, col
+     * ORDER BY col NULLS LAST → ORDER BY col IS NULL, col
+     * ORDER BY col DESC NULLS FIRST → ORDER BY col IS NULL DESC, col DESC
+     * ORDER BY col DESC NULLS LAST → ORDER BY col IS NULL, col DESC
+     */
+    private fun convertNullsFirstLast(sql: String): String {
+        var result = sql
+
+        // ORDER BY column [ASC|DESC] NULLS FIRST
+        val nullsFirstPattern = Regex(
+            """ORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_.]*)(\s+DESC)?\s+NULLS\s+FIRST""",
+            RegexOption.IGNORE_CASE
+        )
+        result = nullsFirstPattern.replace(result) { match ->
+            val column = match.groupValues[1]
+            val desc = match.groupValues[2].trim()
+            if (desc.isNotEmpty()) {
+                "ORDER BY $column IS NULL DESC, $column DESC"
+            } else {
+                "ORDER BY $column IS NULL DESC, $column"
+            }
+        }
+
+        // ORDER BY column [ASC|DESC] NULLS LAST
+        val nullsLastPattern = Regex(
+            """ORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_.]*)(\s+DESC)?\s+NULLS\s+LAST""",
+            RegexOption.IGNORE_CASE
+        )
+        result = nullsLastPattern.replace(result) { match ->
+            val column = match.groupValues[1]
+            val desc = match.groupValues[2].trim()
+            if (desc.isNotEmpty()) {
+                "ORDER BY $column IS NULL, $column DESC"
+            } else {
+                "ORDER BY $column IS NULL, $column"
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * ROLLUP/CUBE 변환 (Oracle/PostgreSQL → MySQL)
+     */
+    private fun convertRollupCube(
+        sql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = sql
+
+        // Oracle/PostgreSQL ROLLUP(cols) → MySQL: GROUP BY cols WITH ROLLUP
+        if (targetDialect == DialectType.MYSQL && sourceDialect != DialectType.MYSQL) {
+            val rollupPattern = Regex(
+                """GROUP\s+BY\s+ROLLUP\s*\(\s*([^)]+)\s*\)""",
+                RegexOption.IGNORE_CASE
+            )
+            val beforeRollup = result
+            result = rollupPattern.replace(result) { match ->
+                val columns = match.groupValues[1].trim()
+                "GROUP BY $columns WITH ROLLUP"
+            }
+            if (result != beforeRollup) {
+                appliedRules.add("ROLLUP → WITH ROLLUP 변환")
+            }
+
+            // CUBE는 MySQL에서 직접 지원하지 않음 - 주석 추가
+            val cubePattern = Regex(
+                """GROUP\s+BY\s+CUBE\s*\(\s*([^)]+)\s*\)""",
+                RegexOption.IGNORE_CASE
+            )
+            val beforeCube = result
+            result = cubePattern.replace(result) { match ->
+                val columns = match.groupValues[1].trim()
+                "GROUP BY $columns /* CUBE not supported in MySQL, using simple GROUP BY */"
+            }
+            if (result != beforeCube) {
+                appliedRules.add("CUBE → MySQL 미지원 (GROUP BY로 대체)")
+            }
+
+            // GROUPING SETS도 MySQL에서 직접 지원하지 않음
+            val groupingSetsPattern = Regex(
+                """GROUP\s+BY\s+GROUPING\s+SETS\s*\([^)]+\)""",
+                RegexOption.IGNORE_CASE
+            )
+            val beforeGroupingSets = result
+            result = groupingSetsPattern.replace(result) { match ->
+                "${match.value} /* GROUPING SETS not supported in MySQL */"
+            }
+            if (result != beforeGroupingSets) {
+                appliedRules.add("GROUPING SETS → MySQL 미지원")
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * MySQL WITH ROLLUP → Oracle/PostgreSQL ROLLUP()
+     */
+    private fun convertWithRollup(sql: String): String {
+        val withRollupPattern = Regex(
+            """GROUP\s+BY\s+([^;]+?)\s+WITH\s+ROLLUP""",
+            RegexOption.IGNORE_CASE
+        )
+        return withRollupPattern.replace(sql) { match ->
+            val columns = match.groupValues[1].trim()
+            "GROUP BY ROLLUP($columns)"
+        }
     }
 
     /**
