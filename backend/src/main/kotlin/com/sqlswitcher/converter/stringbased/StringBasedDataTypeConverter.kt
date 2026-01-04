@@ -7,9 +7,15 @@ import org.springframework.stereotype.Component
  * 문자열 기반 데이터타입 변환기
  *
  * AST 파싱이 불가능한 경우 정규식을 사용하여 데이터타입을 변환합니다.
+ *
+ * 성능 최적화: 모든 Regex 패턴이 사전 컴파일됩니다.
  */
 @Component
 class StringBasedDataTypeConverter {
+
+    // ========== 사전 컴파일된 Regex 패턴 (성능 최적화) ==========
+    private val byteKeywordPattern = Regex("\\(\\s*(\\d+)\\s+BYTE\\s*\\)", RegexOption.IGNORE_CASE)
+    private val charKeywordPattern = Regex("\\(\\s*(\\d+)\\s+CHAR\\s*\\)", RegexOption.IGNORE_CASE)
 
     /**
      * 데이터타입 변환 수행
@@ -39,12 +45,12 @@ class StringBasedDataTypeConverter {
     }
 
     /**
-     * Oracle BYTE/CHAR 키워드 제거
+     * Oracle BYTE/CHAR 키워드 제거 (사전 컴파일된 패턴 사용)
      */
     private fun removeOracleByteCharKeyword(sql: String, appliedRules: MutableList<String>): String {
         var result = sql
-        result = result.replace(Regex("\\(\\s*(\\d+)\\s+BYTE\\s*\\)", RegexOption.IGNORE_CASE), "($1)")
-        result = result.replace(Regex("\\(\\s*(\\d+)\\s+CHAR\\s*\\)", RegexOption.IGNORE_CASE), "($1)")
+        result = result.replace(byteKeywordPattern, "($1)")
+        result = result.replace(charKeywordPattern, "($1)")
         if (result != sql) {
             appliedRules.add("Oracle BYTE/CHAR 키워드 제거")
         }

@@ -15,6 +15,77 @@ package com.sqlswitcher.converter.formatter
  */
 object SqlFormatter {
 
+    // ========== 사전 컴파일된 Regex 패턴들 (성능 최적화) ==========
+
+    /** 연속 공백 패턴 */
+    private val CONSECUTIVE_SPACES_PATTERN = Regex("""[ \t]+""")
+
+    /** 연속 줄바꿈 패턴 */
+    private val CONSECUTIVE_NEWLINES_PATTERN = Regex("""\n\s*\n\s*\n+""")
+
+    /** 비교 연산자 패턴 */
+    private val COMPARISON_OPERATOR_PATTERN = Regex("""\s*(=|<>|!=|>=|<=|>|<)\s*""")
+
+    /** 산술 연산자 패턴 */
+    private val ARITHMETIC_OPERATOR_PATTERN = Regex("""\s*(\+|-|\*|/)\s*(?=[^']*(?:'[^']*'[^']*)*$)""")
+
+    /** 문자열 연결 연산자 패턴 */
+    private val CONCAT_OPERATOR_PATTERN = Regex("""\s*\|\|\s*""")
+
+    /** 이중 공백 패턴 */
+    private val DOUBLE_SPACE_PATTERN = Regex("""  +""")
+
+    /** 여는 괄호 뒤 공백 패턴 */
+    private val OPEN_PAREN_SPACE_PATTERN = Regex("""\(\s+""")
+
+    /** 닫는 괄호 앞 공백 패턴 */
+    private val CLOSE_PAREN_SPACE_PATTERN = Regex("""\s+\)""")
+
+    /** 과도한 빈 줄 패턴 */
+    private val EXCESSIVE_EMPTY_LINES_PATTERN = Regex("""\n{3,}""")
+
+    /** 모든 공백 패턴 */
+    private val ALL_WHITESPACE_PATTERN = Regex("""\s+""")
+
+    /** 쉼표 주변 공백 패턴 */
+    private val COMMA_SPACE_PATTERN = Regex("""\s*,\s*""")
+
+    /** SQL 세미콜론 분리 패턴 */
+    private val SEMICOLON_SPLIT_PATTERN = Regex(""";\s*""")
+
+    /** 공백 분리 패턴 */
+    private val WHITESPACE_SPLIT_PATTERN = Regex("\\s+")
+
+    /** 키워드별 사전 컴파일된 패턴 캐시 */
+    private val keywordPatterns: Map<String, Regex> by lazy {
+        MAIN_KEYWORDS.associateWith { keyword ->
+            Regex("""\b${Regex.escape(keyword)}\b""", RegexOption.IGNORE_CASE)
+        }
+    }
+
+    /** 복합 키워드별 사전 컴파일된 패턴 캐시 */
+    private val compoundKeywordPatterns: Map<String, Regex> by lazy {
+        COMPOUND_KEYWORDS.associateWith { keyword ->
+            Regex("""(?<!\n)\s+\b(${Regex.escape(keyword)})\b""", RegexOption.IGNORE_CASE)
+        }
+    }
+
+    /** 단일 키워드별 줄바꿈 패턴 캐시 */
+    private val singleKeywordNewlinePatterns: Map<String, Regex> by lazy {
+        NEWLINE_BEFORE_KEYWORDS.filter { keyword ->
+            COMPOUND_KEYWORDS.none { it.contains(keyword) }
+        }.associateWith { keyword ->
+            Regex("""(?<!\n)\s+\b(${Regex.escape(keyword)})\b""", RegexOption.IGNORE_CASE)
+        }
+    }
+
+    /** 복합 키워드 목록 */
+    private val COMPOUND_KEYWORDS = listOf(
+        "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN",
+        "OUTER JOIN", "CROSS JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN",
+        "ORDER BY", "GROUP BY", "UNION ALL", "INSERT INTO"
+    )
+
     /** 주요 SQL 키워드 */
     private val MAIN_KEYWORDS = setOf(
         "SELECT", "FROM", "WHERE", "AND", "OR", "ORDER BY", "GROUP BY",
@@ -143,23 +214,23 @@ object SqlFormatter {
     private fun normalizeWhitespace(sql: String): String {
         var result = sql
 
-        // 연속 공백을 하나로
-        result = result.replace(Regex("""[ \t]+"""), " ")
+        // 연속 공백을 하나로 (사전 컴파일된 패턴 사용)
+        result = result.replace(CONSECUTIVE_SPACES_PATTERN, " ")
 
-        // 연속 줄바꿈을 하나로
-        result = result.replace(Regex("""\n\s*\n\s*\n+"""), "\n\n")
+        // 연속 줄바꿈을 하나로 (사전 컴파일된 패턴 사용)
+        result = result.replace(CONSECUTIVE_NEWLINES_PATTERN, "\n\n")
 
         return result.trim()
     }
 
     /**
-     * 키워드 대소문자 적용
+     * 키워드 대소문자 적용 (사전 컴파일된 패턴 캐시 사용)
      */
     private fun applyKeywordCase(sql: String, keywordCase: KeywordCase): String {
         var result = sql
 
-        MAIN_KEYWORDS.forEach { keyword ->
-            val regex = Regex("""\b${Regex.escape(keyword)}\b""", RegexOption.IGNORE_CASE)
+        // 사전 컴파일된 패턴 캐시 사용으로 30+ Regex 객체 생성 방지
+        keywordPatterns.forEach { (_, regex) ->
             result = regex.replace(result) { match ->
                 when (keywordCase) {
                     KeywordCase.UPPER -> match.value.uppercase()
@@ -173,68 +244,56 @@ object SqlFormatter {
     }
 
     /**
-     * 연산자 주변 공백 정규화
+     * 연산자 주변 공백 정규화 (사전 컴파일된 패턴 사용)
      */
     private fun normalizeOperators(sql: String): String {
         var result = sql
 
         // 비교 연산자
-        result = result.replace(Regex("""\s*(=|<>|!=|>=|<=|>|<)\s*""")) { " ${it.groupValues[1]} " }
+        result = result.replace(COMPARISON_OPERATOR_PATTERN) { " ${it.groupValues[1]} " }
 
         // 산술 연산자 (문자열 내부 제외)
-        result = result.replace(Regex("""\s*(\+|-|\*|/)\s*(?=[^']*(?:'[^']*'[^']*)*$)""")) { " ${it.groupValues[1]} " }
+        result = result.replace(ARITHMETIC_OPERATOR_PATTERN) { " ${it.groupValues[1]} " }
 
         // 문자열 연결 연산자
-        result = result.replace(Regex("""\s*\|\|\s*"""), " || ")
+        result = result.replace(CONCAT_OPERATOR_PATTERN, " || ")
 
         // 이중 공백 제거
-        result = result.replace(Regex("""  +"""), " ")
+        result = result.replace(DOUBLE_SPACE_PATTERN, " ")
 
         return result
     }
 
     /**
-     * 괄호 주변 공백 정리
+     * 괄호 주변 공백 정리 (사전 컴파일된 패턴 사용)
      */
     private fun normalizeParentheses(sql: String): String {
         var result = sql
 
         // 여는 괄호 뒤 공백 제거
-        result = result.replace(Regex("""\(\s+"""), "(")
+        result = result.replace(OPEN_PAREN_SPACE_PATTERN, "(")
 
         // 닫는 괄호 앞 공백 제거
-        result = result.replace(Regex("""\s+\)"""), ")")
+        result = result.replace(CLOSE_PAREN_SPACE_PATTERN, ")")
 
         return result
     }
 
     /**
-     * 주요 키워드 앞에 줄바꿈 추가
+     * 주요 키워드 앞에 줄바꿈 추가 (사전 컴파일된 패턴 캐시 사용)
      */
     private fun addNewlines(sql: String, options: FormatOptions): String {
         var result = sql
 
-        // 먼저 복합 키워드 처리 (INNER JOIN, LEFT JOIN 등)
-        val compoundKeywords = listOf(
-            "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN",
-            "OUTER JOIN", "CROSS JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN",
-            "ORDER BY", "GROUP BY", "UNION ALL", "INSERT INTO"
-        )
-
-        compoundKeywords.forEach { keyword ->
-            val regex = Regex("""(?<!\n)\s+\b(${Regex.escape(keyword)})\b""", RegexOption.IGNORE_CASE)
+        // 먼저 복합 키워드 처리 (INNER JOIN, LEFT JOIN 등) - 사전 컴파일된 패턴 사용
+        compoundKeywordPatterns.forEach { (_, regex) ->
             result = regex.replace(result) { match ->
                 "\n${match.groupValues[1].uppercase()}"
             }
         }
 
-        // 그 다음 단일 키워드 처리 (복합 키워드의 일부가 아닌 경우)
-        val singleKeywords = NEWLINE_BEFORE_KEYWORDS.filter { keyword ->
-            compoundKeywords.none { it.contains(keyword) }
-        }
-
-        singleKeywords.forEach { keyword ->
-            val regex = Regex("""(?<!\n)\s+\b(${Regex.escape(keyword)})\b""", RegexOption.IGNORE_CASE)
+        // 그 다음 단일 키워드 처리 - 사전 컴파일된 패턴 사용
+        singleKeywordNewlinePatterns.forEach { (_, regex) ->
             result = regex.replace(result) { match ->
                 "\n${match.groupValues[1]}"
             }
@@ -259,7 +318,7 @@ object SqlFormatter {
             }
 
             // 현재 줄이 들여쓰기 감소 키워드로 시작하면 먼저 감소
-            val firstWord = trimmedLine.split(Regex("\\s+"))[0].uppercase()
+            val firstWord = trimmedLine.split(WHITESPACE_SPLIT_PATTERN)[0].uppercase()
             if (INDENT_DECREASE_KEYWORDS.any { firstWord.startsWith(it) }) {
                 indentLevel = maxOf(0, indentLevel - 1)
             }
@@ -271,7 +330,7 @@ object SqlFormatter {
             // 들여쓰기 증가 키워드 확인
             if (INDENT_INCREASE_KEYWORDS.any { trimmedLine.uppercase().contains(it) }) {
                 // END나 닫는 괄호로 끝나면 증가하지 않음
-                val lastWord = trimmedLine.split(Regex("\\s+")).lastOrNull()?.uppercase() ?: ""
+                val lastWord = trimmedLine.split(WHITESPACE_SPLIT_PATTERN).lastOrNull()?.uppercase() ?: ""
                 if (!lastWord.contains("END") && !trimmedLine.endsWith(")") && !trimmedLine.endsWith(");")) {
                     indentLevel++
                 }
@@ -350,18 +409,18 @@ object SqlFormatter {
     }
 
     /**
-     * 과도한 빈 줄 제거
+     * 과도한 빈 줄 제거 (사전 컴파일된 패턴 사용)
      */
     private fun removeExcessiveEmptyLines(sql: String): String {
-        return sql.replace(Regex("""\n{3,}"""), "\n\n")
+        return sql.replace(EXCESSIVE_EMPTY_LINES_PATTERN, "\n\n")
     }
 
     /**
-     * 간단한 한 줄 포맷 (공백만 정리)
+     * 간단한 한 줄 포맷 (공백만 정리, 사전 컴파일된 패턴 사용)
      */
     fun formatOneLine(sql: String): String {
         return sql
-            .replace(Regex("""\s+"""), " ")
+            .replace(ALL_WHITESPACE_PATTERN, " ")
             .trim()
     }
 
@@ -379,20 +438,20 @@ object SqlFormatter {
     }
 
     /**
-     * 압축 포맷 (불필요한 공백 모두 제거)
+     * 압축 포맷 (불필요한 공백 모두 제거, 사전 컴파일된 패턴 사용)
      */
     fun formatCompact(sql: String): String {
         var result = sql
 
         // 모든 줄바꿈을 공백으로
-        result = result.replace(Regex("""\s+"""), " ")
+        result = result.replace(ALL_WHITESPACE_PATTERN, " ")
 
         // 괄호 주변 공백 제거
-        result = result.replace(Regex("""\(\s+"""), "(")
-        result = result.replace(Regex("""\s+\)"""), ")")
+        result = result.replace(OPEN_PAREN_SPACE_PATTERN, "(")
+        result = result.replace(CLOSE_PAREN_SPACE_PATTERN, ")")
 
         // 쉼표 뒤 공백만 유지
-        result = result.replace(Regex("""\s*,\s*"""), ", ")
+        result = result.replace(COMMA_SPACE_PATTERN, ", ")
 
         return result.trim()
     }
@@ -423,10 +482,10 @@ object SqlFormatter {
     }
 
     /**
-     * 여러 SQL 문 포맷팅
+     * 여러 SQL 문 포맷팅 (사전 컴파일된 패턴 사용)
      */
     fun formatMultiple(sql: String, separator: String = ";"): String {
-        val statements = sql.split(Regex(""";\s*"""))
+        val statements = sql.split(SEMICOLON_SPLIT_PATTERN)
             .filter { it.isNotBlank() }
 
         return statements.joinToString(";\n\n") { format(it.trim()) } + ";"

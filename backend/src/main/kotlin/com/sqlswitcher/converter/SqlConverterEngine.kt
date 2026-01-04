@@ -53,6 +53,39 @@ class SqlConverterEngine(
 ) {
     private val dialectMap: ConcurrentHashMap<DialectType, DatabaseDialect> = ConcurrentHashMap()
 
+    // ========== 사전 컴파일된 Regex 패턴들 (성능 최적화) ==========
+
+    companion object {
+        /** CREATE OR REPLACE 패턴 */
+        private val CREATE_OR_REPLACE_PATTERN = Regex(
+            """^\s*CREATE\s+(?:OR\s+REPLACE\s+)?""",
+            RegexOption.IGNORE_CASE
+        )
+
+        /** PL/SQL 객체 타입별 패턴 캐시 */
+        private val PLSQL_OBJECT_PATTERNS: Map<String, Regex> by lazy {
+            listOf(
+                "PROCEDURE", "FUNCTION", "PACKAGE", "PACKAGE BODY",
+                "TYPE", "TYPE BODY", "TRIGGER", "LIBRARY",
+                "JAVA SOURCE", "JAVA CLASS"
+            ).associateWith { objType ->
+                Regex(
+                    """CREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?$objType\b""",
+                    RegexOption.IGNORE_CASE
+                )
+            }
+        }
+
+        /** BEGIN 키워드 패턴 */
+        private val BEGIN_PATTERN = Regex("""\bBEGIN\b""")
+
+        /** CASE 키워드 패턴 */
+        private val CASE_PATTERN = Regex("""\bCASE\b""")
+
+        /** WHEN MATCHED 패턴 (MERGE 문 분석용) */
+        private val WHEN_MATCHED_PATTERN = Regex("""WHEN\s+(NOT\s+)?MATCHED""")
+    }
+
     /**
      * 자동 검증 활성화 여부
      */
@@ -445,8 +478,9 @@ class SqlConverterEngine(
                 )
             }
 
-            // DROP PACKAGE 처리
-            if (sql.uppercase().contains("DROP") && sql.uppercase().contains("PACKAGE")) {
+            // DROP PACKAGE 처리 (upperSql 캐시 재사용)
+            val upperSqlCached = sql.uppercase()
+            if (upperSqlCached.contains("DROP") && upperSqlCached.contains("PACKAGE")) {
                 convertedSql = packageConversionService.convertDropPackage(
                     sql, sourceDialectType, targetDialectType, warnings, appliedRules
                 )
@@ -585,33 +619,19 @@ class SqlConverterEngine(
     /**
      * 파싱을 스킵해야 하는 SQL인지 확인
      * PL/SQL, PACKAGE, TYPE, TRIGGER 등 JSQLParser가 처리하지 못하는 구문
+     * (사전 컴파일된 패턴 사용으로 성능 최적화)
      */
     private fun shouldSkipParsing(sql: String): Boolean {
         val upperSql = sql.uppercase().trim()
 
-        // CREATE OR REPLACE 패턴 체크
-        val createOrReplacePattern = Regex(
-            """^\s*CREATE\s+(?:OR\s+REPLACE\s+)?""",
-            RegexOption.IGNORE_CASE
-        )
-
-        if (!createOrReplacePattern.containsMatchIn(sql)) {
+        // CREATE OR REPLACE 패턴 체크 (사전 컴파일된 패턴 사용)
+        if (!CREATE_OR_REPLACE_PATTERN.containsMatchIn(sql)) {
             // CREATE 문이 아니면 계층형 쿼리, MERGE 등 확인
             return isHierarchicalQuery(upperSql) || isComplexMerge(upperSql)
         }
 
-        // PL/SQL 객체 타입들
-        val plsqlObjects = listOf(
-            "PROCEDURE", "FUNCTION", "PACKAGE", "PACKAGE BODY",
-            "TYPE", "TYPE BODY", "TRIGGER", "LIBRARY",
-            "JAVA SOURCE", "JAVA CLASS"
-        )
-
-        for (objType in plsqlObjects) {
-            val pattern = Regex(
-                """CREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?$objType\b""",
-                RegexOption.IGNORE_CASE
-            )
+        // PL/SQL 객체 타입들 (사전 컴파일된 패턴 캐시 사용)
+        for ((_, pattern) in PLSQL_OBJECT_PATTERNS) {
             if (pattern.containsMatchIn(sql)) {
                 return true
             }
@@ -619,9 +639,9 @@ class SqlConverterEngine(
 
         // BEGIN...END 블록이 포함된 경우 (익명 PL/SQL 블록)
         if (upperSql.contains("BEGIN") && upperSql.contains("END")) {
-            // SELECT 문 내의 CASE WHEN ... END는 제외
-            val beginCount = Regex("""\bBEGIN\b""").findAll(upperSql).count()
-            val caseEndCount = Regex("""\bCASE\b""").findAll(upperSql).count()
+            // SELECT 문 내의 CASE WHEN ... END는 제외 (사전 컴파일된 패턴 사용)
+            val beginCount = BEGIN_PATTERN.findAll(upperSql).count()
+            val caseEndCount = CASE_PATTERN.findAll(upperSql).count()
             if (beginCount > 0 && beginCount > caseEndCount) {
                 return true
             }
@@ -632,7 +652,7 @@ class SqlConverterEngine(
             return true
         }
 
-        // Oracle DIRECTORY, CONTEXT, SYNONYM 등
+        // Oracle DIRECTORY, CONTEXT, SYNONYM 등 (CREATE 체크를 루프 밖에서 한 번만 수행)
         val oracleOnlyObjects = listOf(
             "DIRECTORY", "CONTEXT", "SYNONYM", "PUBLIC SYNONYM",
             "DATABASE LINK", "DBLINK", "MATERIALIZED VIEW LOG",
@@ -640,8 +660,9 @@ class SqlConverterEngine(
             "PFILE", "ROLLBACK SEGMENT", "UNDO TABLESPACE"
         )
 
+        val hasCreate = upperSql.contains("CREATE")
         for (objType in oracleOnlyObjects) {
-            if (upperSql.contains("CREATE") && upperSql.contains(objType)) {
+            if (hasCreate && upperSql.contains(objType)) {
                 return true
             }
         }
@@ -672,13 +693,13 @@ class SqlConverterEngine(
     }
 
     /**
-     * 복잡한 MERGE 문인지 확인 (다중 WHEN 절 등)
+     * 복잡한 MERGE 문인지 확인 (다중 WHEN 절 등, 사전 컴파일된 패턴 사용)
      */
     private fun isComplexMerge(upperSql: String): Boolean {
         if (!upperSql.contains("MERGE")) return false
 
-        // WHEN MATCHED/NOT MATCHED가 여러 개인 경우
-        val whenMatchedCount = Regex("""WHEN\s+(NOT\s+)?MATCHED""").findAll(upperSql).count()
+        // WHEN MATCHED/NOT MATCHED가 여러 개인 경우 (사전 컴파일된 패턴 사용)
+        val whenMatchedCount = WHEN_MATCHED_PATTERN.findAll(upperSql).count()
         return whenMatchedCount > 2
     }
 
