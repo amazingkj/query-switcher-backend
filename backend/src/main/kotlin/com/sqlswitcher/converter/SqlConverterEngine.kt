@@ -18,6 +18,7 @@ import com.sqlswitcher.converter.feature.udt.UserDefinedTypeConverter
 import com.sqlswitcher.converter.formatter.SqlFormatter
 import com.sqlswitcher.converter.preprocessor.OracleSyntaxPreprocessor
 import com.sqlswitcher.converter.recovery.ConversionRecoveryService
+import com.sqlswitcher.converter.streaming.LargeSqlProcessor
 import com.sqlswitcher.converter.stringbased.StringBasedFunctionConverter
 import com.sqlswitcher.converter.stringbased.StringBasedDataTypeConverter
 import com.sqlswitcher.converter.validation.SqlValidationService
@@ -51,6 +52,16 @@ class SqlConverterEngine(
     private val sqlValidationService: SqlValidationService
 ) {
     private val dialectMap: ConcurrentHashMap<DialectType, DatabaseDialect> = ConcurrentHashMap()
+
+    /**
+     * 자동 검증 활성화 여부
+     */
+    var enableAutoValidation: Boolean = true
+
+    /**
+     * 대용량 SQL 자동 최적화 활성화 여부
+     */
+    var enableLargeSqlOptimization: Boolean = true
 
     init {
         dialects.forEach { dialect ->
@@ -96,15 +107,21 @@ class SqlConverterEngine(
         val appliedRules = mutableListOf<String>()
 
         return try {
+            // 대용량 SQL 처리 최적화
+            if (enableLargeSqlOptimization && LargeSqlProcessor.isLargeSql(sql)) {
+                return convertLargeSql(sql, sourceDialectType, targetDialectType, startTime)
+            }
+
             // 여러 SQL 문장 분리 처리
             val sqlStatements = splitSqlStatements(sql)
 
             // 단일 문장인 경우 기존 로직
             if (sqlStatements.size <= 1) {
-                return convertSingleStatement(
+                val result = convertSingleStatement(
                     sql.trim(), sourceDialectType, targetDialectType, modelOptions,
                     warnings, appliedRules, startTime
                 )
+                return addValidationToResult(result, sql, sourceDialectType, targetDialectType)
             }
 
             // 여러 문장인 경우 각각 변환
@@ -127,13 +144,18 @@ class SqlConverterEngine(
 
             appliedRules.add("${convertedStatements.size}개의 SQL 문장 일괄 변환")
 
-            ConversionResult(
-                convertedSql = convertedStatements.joinToString(";\n") + if (convertedStatements.isNotEmpty()) ";" else "",
+            val finalSql = convertedStatements.joinToString(";\n") + if (convertedStatements.isNotEmpty()) ";" else ""
+
+            val result = ConversionResult(
+                convertedSql = finalSql,
                 warnings = warnings.distinctBy { it.message },
-                appliedRules = appliedRules.distinct()
+                appliedRules = appliedRules.distinct(),
+                executionTime = duration
             )
+
+            addValidationToResult(result, sql, sourceDialectType, targetDialectType)
         } catch (e: Exception) {
-            @Suppress("UNUSED_VARIABLE") val endTime = System.currentTimeMillis()
+            val endTime = System.currentTimeMillis()
 
             warnings.add(createWarning(
                 type = WarningType.UNSUPPORTED_FUNCTION,
@@ -147,8 +169,98 @@ class SqlConverterEngine(
             ConversionResult(
                 convertedSql = sql,
                 warnings = warnings,
-                appliedRules = appliedRules
+                appliedRules = appliedRules,
+                executionTime = endTime - startTime
             )
+        }
+    }
+
+    /**
+     * 대용량 SQL 변환 (청크 병렬 처리)
+     */
+    private fun convertLargeSql(
+        sql: String,
+        sourceDialectType: DialectType,
+        targetDialectType: DialectType,
+        startTime: Long
+    ): ConversionResult {
+        val strategy = LargeSqlProcessor.determineStrategy(sql)
+
+        val result = LargeSqlProcessor.processInChunks(
+            sql = sql,
+            sourceDialect = sourceDialectType,
+            targetDialect = targetDialectType,
+            converter = { stmt, src, tgt ->
+                val warnings = mutableListOf<ConversionWarning>()
+                val rules = mutableListOf<String>()
+                convertSingleStatement(stmt, src, tgt, null, warnings, rules, startTime)
+            },
+            chunkSize = strategy.chunkSize
+        )
+
+        val endTime = System.currentTimeMillis()
+        sqlMetricsService.recordConversionDuration(endTime - startTime, sourceDialectType.name, targetDialectType.name)
+
+        if (result.failedStatements == 0) {
+            sqlMetricsService.recordConversionSuccess(sourceDialectType.name, targetDialectType.name)
+        }
+
+        val conversionResult = ConversionResult(
+            convertedSql = result.convertedSql,
+            warnings = result.warnings,
+            appliedRules = result.appliedRules + listOf(
+                "대용량 SQL 최적화 적용",
+                "전체 ${result.totalStatements}개 문장 중 ${result.successfulStatements}개 성공"
+            ),
+            executionTime = result.processingTimeMs
+        )
+
+        return addValidationToResult(conversionResult, sql, sourceDialectType, targetDialectType)
+    }
+
+    /**
+     * 변환 결과에 검증 정보 추가
+     */
+    private fun addValidationToResult(
+        result: ConversionResult,
+        originalSql: String,
+        sourceDialect: DialectType,
+        targetDialect: DialectType
+    ): ConversionResult {
+        if (!enableAutoValidation) {
+            return result
+        }
+
+        return try {
+            val validationResult = sqlValidationService.validateConversionPair(
+                originalSql,
+                result.convertedSql,
+                sourceDialect,
+                targetDialect
+            )
+
+            val validationInfo = ValidationInfo(
+                isValid = validationResult.convertedValid,
+                statementType = validationResult.detailedValidation.parseResult.statementType,
+                isProductionReady = validationResult.detailedValidation.isProductionReady,
+                qualityScore = validationResult.qualityScore,
+                compatibilityIssues = validationResult.detailedValidation.compatibilityIssues,
+                recommendation = validationResult.recommendation
+            )
+
+            // 검증 경고도 결과에 추가
+            val allWarnings = result.warnings + validationResult.conversionWarnings.filter { vw ->
+                result.warnings.none { it.message == vw.message }
+            }
+
+            result.copy(
+                warnings = allWarnings,
+                validation = validationInfo,
+                appliedRules = result.appliedRules + listOf("자동 검증 완료 (품질: ${String.format("%.0f", validationInfo.qualityScore * 100)}%)")
+            )
+        } catch (e: Exception) {
+            // 검증 실패 시 원본 결과 반환
+            result
         }
     }
 

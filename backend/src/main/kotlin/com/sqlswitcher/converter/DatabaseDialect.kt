@@ -73,7 +73,26 @@ data class ConversionResult(
     val warnings: List<ConversionWarning> = emptyList(),
     val executionTime: Long = 0,
     val appliedRules: List<String> = emptyList(),
-    val metadata: ConversionMetadata? = null
+    val metadata: ConversionMetadata? = null,
+    val validation: ValidationInfo? = null
+)
+
+/**
+ * 변환 결과 검증 정보
+ */
+data class ValidationInfo(
+    /** SQL 파싱 유효성 */
+    val isValid: Boolean,
+    /** 파싱된 문장 유형 */
+    val statementType: String? = null,
+    /** 프로덕션 사용 준비 여부 */
+    val isProductionReady: Boolean = false,
+    /** 변환 품질 점수 (0.0 ~ 1.0) */
+    val qualityScore: Double = 1.0,
+    /** 호환성 이슈 목록 */
+    val compatibilityIssues: List<String> = emptyList(),
+    /** 권장 사항 */
+    val recommendation: String? = null
 )
 
 /**

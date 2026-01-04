@@ -16,8 +16,14 @@ import com.sqlswitcher.converter.WarningType
  * - 변환 실패 시 원본 유지
  * - 상세한 에러 리포팅
  * - 부분 성공/실패 통계
+ * - 고급 복구 전략 적용 (AdvancedRecoveryStrategies 통합)
  */
 object ConversionRecoveryService {
+
+    /**
+     * 고급 복구 사용 여부
+     */
+    var enableAdvancedRecovery: Boolean = true
 
     /**
      * SQL 문 분리 패턴
@@ -170,9 +176,41 @@ object ConversionRecoveryService {
                     statementType = statementType
                 ))
             } catch (e: Exception) {
-                failCount++
                 val errorMessage = e.message ?: "Unknown error"
 
+                // 고급 복구 전략 시도
+                if (enableAdvancedRecovery) {
+                    val recoveryResult = AdvancedRecoveryStrategies.attemptRecovery(
+                        trimmed, e, targetDialect
+                    ) { recoveredSql ->
+                        converterFn(recoveredSql, sourceDialect, targetDialect, warnings, rules)
+                    }
+
+                    if (recoveryResult.success) {
+                        allWarnings.addAll(recoveryResult.warnings)
+                        allRules.addAll(rules)
+                        allRules.add("고급 복구 전략 적용: ${recoveryResult.strategyUsed}")
+
+                        val status = if (recoveryResult.confidence >= 0.8) {
+                            successCount++
+                            ConversionStatus.SUCCESS
+                        } else {
+                            partialCount++
+                            ConversionStatus.PARTIAL
+                        }
+
+                        results.add(StatementResult(
+                            originalSql = trimmed,
+                            convertedSql = recoveryResult.finalSql,
+                            status = status,
+                            statementType = statementType
+                        ))
+                        continue
+                    }
+                }
+
+                // 복구 실패 시 기존 로직
+                failCount++
                 allWarnings.add(ConversionWarning(
                     type = WarningType.MANUAL_REVIEW_NEEDED,
                     message = "변환 중 오류 발생: $errorMessage",
@@ -236,6 +274,30 @@ object ConversionRecoveryService {
                 statementType = detectStatementType(trimmed)
             )
         } catch (e: Exception) {
+            // 고급 복구 전략 시도
+            if (enableAdvancedRecovery) {
+                val recoveryResult = AdvancedRecoveryStrategies.attemptRecovery(
+                    trimmed, e, targetDialect
+                ) { recoveredSql ->
+                    converterFn(recoveredSql, sourceDialect, targetDialect, warnings, rules)
+                }
+
+                if (recoveryResult.success) {
+                    val status = if (recoveryResult.confidence >= 0.8) {
+                        ConversionStatus.SUCCESS
+                    } else {
+                        ConversionStatus.PARTIAL
+                    }
+
+                    return StatementResult(
+                        originalSql = trimmed,
+                        convertedSql = recoveryResult.finalSql,
+                        status = status,
+                        statementType = detectStatementType(trimmed)
+                    )
+                }
+            }
+
             StatementResult(
                 originalSql = trimmed,
                 convertedSql = buildErrorComment(trimmed, e.message ?: "Unknown error", targetDialect),

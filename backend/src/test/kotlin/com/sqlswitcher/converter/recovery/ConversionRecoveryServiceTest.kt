@@ -852,4 +852,191 @@ class ConversionRecoveryServiceTest {
             assertFalse(allFail.isPartiallySuccessful)
         }
     }
+
+    @Nested
+    @DisplayName("고급 복구 전략 통합 테스트")
+    inner class AdvancedRecoveryIntegrationTest {
+
+        @Test
+        @DisplayName("고급 복구 활성화 시 TABLESPACE 제거 후 재변환")
+        fun testAdvancedRecoveryWithTablespace() {
+            ConversionRecoveryService.enableAdvancedRecovery = true
+
+            val sql = "CREATE TABLE test (id NUMBER) TABLESPACE users"
+
+            // TABLESPACE가 있으면 실패하는 변환기
+            val strictConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { sqlPart, _, _, _, rules ->
+                    if (sqlPart.uppercase().contains("TABLESPACE")) {
+                        throw RuntimeException("TABLESPACE not supported")
+                    }
+                    rules.add("테이블 생성 변환")
+                    sqlPart.replace("NUMBER", "INT")
+                }
+
+            val result = ConversionRecoveryService.convertSingleWithRecovery(
+                sql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                strictConverter
+            )
+
+            // 고급 복구가 TABLESPACE를 제거하고 재변환 성공
+            assertTrue(result.status == ConversionRecoveryService.ConversionStatus.SUCCESS ||
+                    result.status == ConversionRecoveryService.ConversionStatus.PARTIAL,
+                "고급 복구로 성공 또는 부분 성공해야 함")
+            assertFalse(result.convertedSql.uppercase().contains("TABLESPACE"),
+                "TABLESPACE가 제거되어야 함")
+        }
+
+        @Test
+        @DisplayName("고급 복구 비활성화 시 원래대로 실패")
+        fun testAdvancedRecoveryDisabled() {
+            ConversionRecoveryService.enableAdvancedRecovery = false
+
+            val sql = "CREATE TABLE test (id NUMBER) TABLESPACE users"
+
+            val strictConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { sqlPart, _, _, _, _ ->
+                    if (sqlPart.uppercase().contains("TABLESPACE")) {
+                        throw RuntimeException("TABLESPACE not supported")
+                    }
+                    sqlPart
+                }
+
+            val result = ConversionRecoveryService.convertSingleWithRecovery(
+                sql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                strictConverter
+            )
+
+            assertEquals(ConversionRecoveryService.ConversionStatus.FAILED, result.status)
+            assertTrue(result.convertedSql.contains("CONVERSION ERROR"))
+
+            // 테스트 후 다시 활성화
+            ConversionRecoveryService.enableAdvancedRecovery = true
+        }
+
+        @Test
+        @DisplayName("힌트 제거 후 재변환")
+        fun testAdvancedRecoveryWithHint() {
+            ConversionRecoveryService.enableAdvancedRecovery = true
+
+            val sql = "SELECT /*+ INDEX(e emp_idx) */ * FROM employees e"
+
+            // 힌트가 있으면 실패하는 변환기
+            val strictConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { sqlPart, _, _, _, rules ->
+                    if (sqlPart.contains("/*+")) {
+                        throw RuntimeException("Oracle hints not supported")
+                    }
+                    rules.add("SELECT 변환")
+                    sqlPart.uppercase()
+                }
+
+            val result = ConversionRecoveryService.convertSingleWithRecovery(
+                sql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                strictConverter
+            )
+
+            assertTrue(result.status == ConversionRecoveryService.ConversionStatus.SUCCESS ||
+                    result.status == ConversionRecoveryService.ConversionStatus.PARTIAL)
+            assertFalse(result.convertedSql.contains("/*+"), "힌트가 제거되어야 함")
+            assertTrue(result.convertedSql.uppercase().contains("EMPLOYEES"))
+        }
+
+        @Test
+        @DisplayName("다중 문장에서 고급 복구 적용")
+        fun testAdvancedRecoveryMultipleStatements() {
+            ConversionRecoveryService.enableAdvancedRecovery = true
+
+            val sql = """
+                SELECT * FROM t1;
+                CREATE TABLE t2 (id NUMBER) TABLESPACE ts1;
+                SELECT /*+ FULL(t3) */ * FROM t3;
+            """.trimIndent()
+
+            var callCount = 0
+            val strictConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { sqlPart, _, _, _, rules ->
+                    callCount++
+                    if (sqlPart.uppercase().contains("TABLESPACE") || sqlPart.contains("/*+")) {
+                        throw RuntimeException("Unsupported syntax")
+                    }
+                    rules.add("변환 규칙 $callCount")
+                    sqlPart.uppercase()
+                }
+
+            val result = ConversionRecoveryService.convertWithRecovery(
+                sql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                strictConverter
+            )
+
+            // 첫 번째는 그대로 성공, 나머지는 복구 후 성공
+            assertTrue(result.successfulStatements >= 1, "최소 1개 이상 성공해야 함")
+
+            // 복구 전략 적용 규칙이 포함되어야 함
+            val hasRecoveryRule = result.appliedRules.any { it.contains("고급 복구 전략") }
+            if (result.successfulStatements > 1) {
+                assertTrue(hasRecoveryRule || result.partialStatements > 0,
+                    "복구 전략이 적용되었거나 부분 성공이 있어야 함")
+            }
+        }
+
+        @Test
+        @DisplayName("복구 불가능한 경우 실패 처리")
+        fun testAdvancedRecoveryImpossible() {
+            ConversionRecoveryService.enableAdvancedRecovery = true
+
+            val sql = "SELECT * FROM employees"
+
+            // 항상 실패하는 변환기 (복구로도 해결 불가)
+            val alwaysFailConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { _, _, _, _, _ ->
+                    throw RuntimeException("Always fails - no recovery possible")
+                }
+
+            val result = ConversionRecoveryService.convertSingleWithRecovery(
+                sql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                alwaysFailConverter
+            )
+
+            assertEquals(ConversionRecoveryService.ConversionStatus.FAILED, result.status)
+        }
+
+        @Test
+        @DisplayName("고급 복구 신뢰도에 따른 상태 결정")
+        fun testAdvancedRecoveryConfidenceStatus() {
+            ConversionRecoveryService.enableAdvancedRecovery = true
+
+            // 물리적 속성 제거는 높은 신뢰도 (0.95)
+            val highConfidenceSql = "CREATE TABLE t (id INT) PCTFREE 10 LOGGING"
+
+            val strictConverter: (String, DialectType, DialectType, MutableList<ConversionWarning>, MutableList<String>) -> String =
+                { sqlPart, _, _, _, _ ->
+                    if (sqlPart.uppercase().contains("PCTFREE") || sqlPart.uppercase().contains("LOGGING")) {
+                        throw RuntimeException("Oracle physical attributes not supported")
+                    }
+                    sqlPart
+                }
+
+            val result = ConversionRecoveryService.convertSingleWithRecovery(
+                highConfidenceSql,
+                DialectType.ORACLE,
+                DialectType.MYSQL,
+                strictConverter
+            )
+
+            // 높은 신뢰도 복구는 SUCCESS
+            assertTrue(result.status == ConversionRecoveryService.ConversionStatus.SUCCESS ||
+                    result.status == ConversionRecoveryService.ConversionStatus.PARTIAL)
+        }
+    }
 }

@@ -212,4 +212,265 @@ class SqlValidationServiceTest {
             assertTrue(errorWarnings.isEmpty(), "정상 변환에는 ERROR 레벨 경고가 없어야 함")
         }
     }
+
+    @Nested
+    @DisplayName("JSQLParser 파싱 검증 테스트")
+    inner class ParseValidationTest {
+
+        @Test
+        @DisplayName("유효한 SELECT 문 파싱")
+        fun testValidSelectParsing() {
+            val sql = "SELECT id, name FROM users WHERE active = 1"
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid, "유효한 SQL은 파싱 성공해야 함")
+            assertEquals("SELECT", result.statementType)
+            assertEquals(1.0, result.confidence)
+            assertTrue(result.errorMessage == null)
+        }
+
+        @Test
+        @DisplayName("유효한 INSERT 문 파싱")
+        fun testValidInsertParsing() {
+            val sql = "INSERT INTO users (id, name) VALUES (1, 'test')"
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("INSERT", result.statementType)
+        }
+
+        @Test
+        @DisplayName("유효한 UPDATE 문 파싱")
+        fun testValidUpdateParsing() {
+            val sql = "UPDATE users SET name = 'new' WHERE id = 1"
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("UPDATE", result.statementType)
+        }
+
+        @Test
+        @DisplayName("유효한 DELETE 문 파싱")
+        fun testValidDeleteParsing() {
+            val sql = "DELETE FROM users WHERE id = 1"
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("DELETE", result.statementType)
+        }
+
+        @Test
+        @DisplayName("유효한 CREATE TABLE 문 파싱")
+        fun testValidCreateTableParsing() {
+            val sql = "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100))"
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("CREATE TABLE", result.statementType)
+        }
+
+        @Test
+        @DisplayName("유효하지 않은 SQL 파싱 실패")
+        fun testInvalidSqlParsing() {
+            val sql = "SELEC * FORM users"  // 오타
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(!result.isValid, "유효하지 않은 SQL은 파싱 실패해야 함")
+            assertNotNull(result.errorMessage)
+            assertEquals(0.0, result.confidence)
+        }
+
+        @Test
+        @DisplayName("빈 SQL 파싱")
+        fun testEmptySqlParsing() {
+            val result = validationService.validateParsing("")
+
+            assertTrue(!result.isValid)
+            assertEquals("SQL이 비어있습니다.", result.errorMessage)
+        }
+
+        @Test
+        @DisplayName("PL/SQL 블록은 스킵 처리")
+        fun testPlSqlBlockSkipped() {
+            val sql = """
+                CREATE OR REPLACE PROCEDURE test_proc IS
+                BEGIN
+                    NULL;
+                END;
+            """.trimIndent()
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("PL/SQL Block", result.statementType)
+            assertEquals(0.8, result.confidence)  // PL/SQL은 낮은 신뢰도
+        }
+
+        @Test
+        @DisplayName("복잡한 서브쿼리 파싱")
+        fun testComplexSubqueryParsing() {
+            val sql = """
+                SELECT e.name, d.dept_name
+                FROM employees e
+                JOIN (SELECT * FROM departments WHERE active = 1) d
+                ON e.dept_id = d.id
+                WHERE e.salary > (SELECT AVG(salary) FROM employees)
+            """.trimIndent()
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("SELECT", result.statementType)
+        }
+
+        @Test
+        @DisplayName("CTE 쿼리 파싱")
+        fun testCteParsing() {
+            val sql = """
+                WITH cte AS (
+                    SELECT id, name FROM users WHERE active = 1
+                )
+                SELECT * FROM cte
+            """.trimIndent()
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(result.isValid)
+            assertEquals("SELECT", result.statementType)
+        }
+    }
+
+    @Nested
+    @DisplayName("방언별 검증 테스트")
+    inner class DialectValidationTest {
+
+        @Test
+        @DisplayName("MySQL 타겟 - RETURNING 절 비호환")
+        fun testMySqlReturningIncompatible() {
+            val sql = "INSERT INTO users (name) VALUES ('test') RETURNING id"
+            val result = validationService.validateForDialect(sql, DialectType.MYSQL)
+
+            assertTrue(result.compatibilityIssues.isNotEmpty())
+            assertTrue(result.compatibilityIssues.any { it.contains("RETURNING") })
+            assertTrue(result.overallConfidence < 1.0)
+        }
+
+        @Test
+        @DisplayName("PostgreSQL 타겟 - 백틱 비호환")
+        fun testPostgreSqlBacktickIncompatible() {
+            val sql = "SELECT `name` FROM `users`"
+            val result = validationService.validateForDialect(sql, DialectType.POSTGRESQL)
+
+            assertTrue(result.compatibilityIssues.isNotEmpty())
+            assertTrue(result.compatibilityIssues.any { it.contains("백틱") })
+            assertTrue(result.syntaxWarnings.isNotEmpty())
+        }
+
+        @Test
+        @DisplayName("Oracle 타겟 - LIMIT 비호환")
+        fun testOracleLimitIncompatible() {
+            val sql = "SELECT * FROM users LIMIT 10"
+            val result = validationService.validateForDialect(sql, DialectType.ORACLE)
+
+            assertTrue(result.compatibilityIssues.isNotEmpty())
+            assertTrue(result.compatibilityIssues.any { it.contains("LIMIT") })
+        }
+
+        @Test
+        @DisplayName("호환되는 SQL - 프로덕션 준비됨")
+        fun testCompatibleSqlProductionReady() {
+            val sql = "SELECT id, name FROM users WHERE active = 1"
+            val result = validationService.validateForDialect(sql, DialectType.MYSQL)
+
+            assertTrue(result.isProductionReady, "호환되는 SQL은 프로덕션 준비되어야 함")
+            assertTrue(result.compatibilityIssues.isEmpty())
+            assertEquals(1.0, result.overallConfidence)
+        }
+    }
+
+    @Nested
+    @DisplayName("변환 쌍 검증 테스트")
+    inner class ConversionPairValidationTest {
+
+        @Test
+        @DisplayName("성공적인 변환 쌍 검증")
+        fun testSuccessfulConversionPair() {
+            val original = "SELECT NVL(name, 'Unknown') FROM employees"
+            val converted = "SELECT IFNULL(name, 'Unknown') FROM employees"
+
+            val result = validationService.validateConversionPair(
+                original, converted,
+                DialectType.ORACLE, DialectType.MYSQL
+            )
+
+            assertTrue(result.originalValid, "원본 SQL이 유효해야 함")
+            assertTrue(result.convertedValid, "변환된 SQL이 유효해야 함")
+            assertTrue(result.qualityScore >= 0.5, "품질 점수가 0.5 이상이어야 함")
+            assertNotNull(result.recommendation)
+        }
+
+        @Test
+        @DisplayName("변환 실패 쌍 검증")
+        fun testFailedConversionPair() {
+            val original = "SELECT * FROM employees WHERE active = 1"
+            val converted = "SELEC * FORM employees"  // 유효하지 않은 SQL
+
+            val result = validationService.validateConversionPair(
+                original, converted,
+                DialectType.ORACLE, DialectType.MYSQL
+            )
+
+            assertTrue(result.originalValid)
+            assertTrue(!result.convertedValid)
+            assertTrue(result.qualityScore < 0.5, "품질 점수가 낮아야 함")
+        }
+
+        @Test
+        @DisplayName("품질 점수 계산 - 경고에 따른 감점")
+        fun testQualityScoreWithWarnings() {
+            val original = "SELECT * FROM users WHERE active = 1 GROUP BY dept"
+            val converted = "SELECT * FROM users"  // WHERE, GROUP BY 누락
+
+            val result = validationService.validateConversionPair(
+                original, converted,
+                DialectType.ORACLE, DialectType.MYSQL
+            )
+
+            // WHERE, GROUP BY 손실로 인해 점수 감점
+            assertTrue(result.qualityScore < 0.9)
+            assertTrue(result.conversionWarnings.any { it.severity == WarningSeverity.ERROR })
+        }
+
+        @Test
+        @DisplayName("권장 사항 생성")
+        fun testRecommendationGeneration() {
+            val original = "SELECT id FROM users"
+            val converted = "SELECT id FROM users"
+
+            val result = validationService.validateConversionPair(
+                original, converted,
+                DialectType.ORACLE, DialectType.MYSQL
+            )
+
+            assertNotNull(result.recommendation)
+            assertTrue(result.recommendation.isNotEmpty())
+
+            if (result.qualityScore >= 0.9) {
+                assertTrue(result.recommendation.contains("우수") || result.recommendation.contains("적합"))
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("에러 위치 추출 테스트")
+    inner class ErrorPositionTest {
+
+        @Test
+        @DisplayName("파싱 오류 시 에러 위치 추출 시도")
+        fun testErrorPositionExtraction() {
+            val sql = "SELECT * FORM users"  // FROM 오타
+            val result = validationService.validateParsing(sql)
+
+            assertTrue(!result.isValid)
+            // 에러 위치가 추출될 수도 있고 안 될 수도 있음 (파서에 따라 다름)
+            assertNotNull(result.errorMessage)
+        }
+    }
 }
