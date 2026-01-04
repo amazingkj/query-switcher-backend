@@ -67,6 +67,37 @@ class ConstraintStateProcessor : SyntaxProcessor {
 }
 
 /**
+ * USING INDEX 절 제거 (Oracle 전용)
+ * PRIMARY KEY (...) USING INDEX ... → PRIMARY KEY (...)
+ */
+class UsingIndexProcessor : SyntaxProcessor {
+    // USING INDEX 절 패턴 (인덱스명, 테이블스페이스 등 포함)
+    private val usingIndexPattern = Regex(
+        """\s+USING\s+INDEX\s+[^\s,;)]+(\s*\([^)]*\))?(\s+TABLESPACE\s+[^\s,;)]+)?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    override fun process(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (!sql.uppercase().contains("USING INDEX")) {
+            return sql
+        }
+
+        val result = usingIndexPattern.replace(sql, "")
+
+        if (result != sql) {
+            appliedRules.add("USING INDEX 절 제거")
+        }
+
+        return result
+    }
+}
+
+/**
  * COMMENT ON 구문 처리 (Oracle → MySQL)
  */
 class CommentOnProcessor : SyntaxProcessor {
@@ -114,7 +145,37 @@ class SchemaTableProcessor : SyntaxProcessor {
 
         appliedRules.add("스키마 접두사 제거")
         return schemaTablePattern.replace(sql) { match ->
-            "\"${match.groupValues[1]}\""
+            match.groupValues[1]  // 큰따옴표 없이 테이블명만 반환
         }
+    }
+}
+
+/**
+ * Oracle 큰따옴표 식별자를 일반 식별자로 변환
+ * "TABLE_NAME" → TABLE_NAME
+ */
+class QuotedIdentifierProcessor : SyntaxProcessor {
+    // 큰따옴표로 감싼 식별자 매칭
+    private val quotedIdentifierPattern = Regex("\"([A-Za-z_][A-Za-z0-9_]*)\"")
+
+    override fun process(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (!sql.contains("\"")) {
+            return sql
+        }
+
+        val result = quotedIdentifierPattern.replace(sql) { match ->
+            match.groupValues[1]
+        }
+
+        if (result != sql) {
+            appliedRules.add("Oracle 큰따옴표 식별자 변환")
+        }
+
+        return result
     }
 }

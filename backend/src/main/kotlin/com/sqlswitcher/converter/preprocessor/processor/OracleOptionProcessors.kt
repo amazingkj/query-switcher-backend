@@ -236,3 +236,27 @@ class RowMovementProcessor : SyntaxProcessor {
         return pattern.replace(sql, " ")
     }
 }
+
+/**
+ * INMEMORY/NO INMEMORY 옵션 제거
+ */
+class InMemoryProcessor : SyntaxProcessor {
+    private val pattern = Regex(
+        """\s*(NO\s+)?INMEMORY\b[^;]*""",
+        RegexOption.IGNORE_CASE
+    )
+
+    override fun process(
+        sql: String,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        if (!pattern.containsMatchIn(sql)) {
+            return sql
+        }
+
+        appliedRules.add("INMEMORY 옵션 제거")
+        return pattern.replace(sql, " ")
+    }
+}
