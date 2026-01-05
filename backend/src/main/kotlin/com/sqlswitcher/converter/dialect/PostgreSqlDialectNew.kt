@@ -39,6 +39,26 @@ class PostgreSqlDialectNew(
 ) {
     override fun getDialectType() = DialectType.POSTGRESQL
 
+    /**
+     * Statement 기반 변환 - PostgreSQL 특화 처리 추가
+     */
+    override fun convertStatement(
+        statement: net.sf.jsqlparser.statement.Statement,
+        targetDialect: DialectType,
+        warnings: MutableList<ConversionWarning>,
+        appliedRules: MutableList<String>
+    ): String {
+        var result = super.convertStatement(statement, targetDialect, warnings, appliedRules)
+
+        // PostgreSQL 특화 처리 적용
+        result = handleSerial(result, targetDialect, appliedRules)
+        result = handleCasting(result, targetDialect, appliedRules)
+        result = handleILike(result, targetDialect, appliedRules)
+        result = handleReturning(result, targetDialect, warnings, appliedRules)
+
+        return result
+    }
+
     override fun convertSql(
         sql: String,
         targetDialect: DialectType,
