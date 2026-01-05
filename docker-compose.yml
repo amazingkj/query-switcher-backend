@@ -53,7 +53,7 @@ networks:
 # To push to Docker Hub:
 # 1. docker login
 # 2. docker-compose build
-# 3. docker tag sql-converter-backend:latest yourusername/sql-converter-backend:latest
-# 4. docker tag sql-converter-frontend:latest yourusername/sql-converter-frontend:latest
-# 5. docker push yourusername/sql-converter-backend:latest
-# 6. docker push yourusername/sql-converter-frontend:latest
+# 3. docker tag sql-converter-backend:latest jiin724/sql-converter-backend:latest
+# 4. docker tag sql-converter-frontend:latest jiin724/sql-converter-frontend:latest
+# 5. docker push jiin724/sql-converter-backend:latest
+# 6. docker push jiin724/sql-converter-frontend:latest

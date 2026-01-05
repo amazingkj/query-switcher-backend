@@ -7,14 +7,14 @@ export const ThemeToggle: React.FC = () => {
   return (
     <button
       onClick={toggleTheme}
-      className="p-2 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors duration-200"
+      className="p-2.5 rounded-button bg-light-200 dark:bg-dark-200 hover:bg-light-300 dark:hover:bg-dark-300 transition-all duration-normal"
       title={isDark ? '라이트 모드로 전환' : '다크 모드로 전환'}
       aria-label="테마 전환"
     >
       {isDark ? (
         // Sun icon (light mode)
         <svg
-          className="w-5 h-5 text-yellow-500"
+          className="w-5 h-5 text-warning-500"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -29,7 +29,7 @@ export const ThemeToggle: React.FC = () => {
       ) : (
         // Moon icon (dark mode)
         <svg
-          className="w-5 h-5 text-gray-700"
+          className="w-5 h-5 text-primary-500"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

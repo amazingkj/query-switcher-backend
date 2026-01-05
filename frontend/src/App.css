@@ -1,30 +1,52 @@
-/* SQL Editor 커스텀 스타일 */
+/* Modernize Style - SQL Editor 커스텀 스타일 */
 .sql-editor {
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  overflow: hidden;
+  @apply border border-light-300 dark:border-dark-200 rounded-card overflow-hidden;
 }
 
 .sql-editor .monaco-editor {
-  border-radius: 0.5rem;
+  @apply rounded-card;
 }
 
-/* 데이터베이스 선택기 스타일 */
-.database-selector select {
-  transition: all 0.2s ease-in-out;
+/* Modernize 스크롤바 스타일링 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-.database-selector select:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+::-webkit-scrollbar-track {
+  @apply bg-light-200 dark:bg-dark-200;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-light-300 dark:bg-dark-300;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary-200 dark:bg-primary-800;
+}
+
+/* Modernize 버튼 호버 효과 */
+button {
+  transition: all 0.25s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Modernize 카드 애니메이션 */
+.card {
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 
 /* 경고 패널 애니메이션 */
 .warning-panel {
-  animation: fadeIn 0.3s ease-in-out;
+  animation: slideUp 0.3s ease-out;
 }
 
-@keyframes fadeIn {
+@keyframes slideUp {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -35,95 +57,35 @@
   }
 }
 
-/* 버튼 호버 효과 */
-button {
-  transition: all 0.2s ease-in-out;
+/* Modernize 모달 백드롭 */
+.modal-backdrop {
+  backdrop-filter: blur(8px);
+  background-color: rgba(0, 0, 0, 0.4);
 }
 
-button:hover {
-  transform: translateY(-1px);
+/* Modernize 포커스 링 */
+.focus-ring:focus {
+  @apply outline-none ring-2 ring-primary-200 border-primary-500;
 }
 
-button:active {
-  transform: translateY(0);
-}
-
-/* 반응형 그리드 */
-@media (max-width: 1024px) {
-  .grid-cols-1.lg\\:grid-cols-2 {
-    grid-template-columns: 1fr;
+/* Modernize 로딩 스피너 */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-/* 스크롤바 스타일링 */
-::-webkit-scrollbar {
-  width: 8px;
+.loading-spinner {
+  animation: spin 1s linear infinite;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
-}
-
-/* 반응형 디자인 개선 */
-@media (max-width: 768px) {
-  .sql-converter {
-    padding: 1rem;
-  }
-  
-  .dual-sql-editor {
-    height: 400px !important;
-  }
-  
-  .monaco-editor {
-    font-size: 12px !important;
-  }
-}
-
-@media (max-width: 640px) {
-  .sql-converter {
-    padding: 0.5rem;
-  }
-  
-  .dual-sql-editor {
-    height: 350px !important;
-  }
-  
-  .monaco-editor {
-    font-size: 11px !important;
-  }
-}
-
-/* 그라데이션 텍스트 */
-.bg-gradient-to-r {
-  background-image: linear-gradient(to right, var(--tw-gradient-stops));
-}
-
-.bg-clip-text {
-  -webkit-background-clip: text;
-  background-clip: text;
-}
-
-.text-transparent {
-  color: transparent;
-}
-
-/* 애니메이션 개선 */
+/* Modernize 펄스 애니메이션 */
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
   }
   50% {
-    opacity: .5;
+    opacity: 0.5;
   }
 }
 
@@ -131,28 +93,120 @@ button:active {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* 모달 백드롭 */
-.modal-backdrop {
-  backdrop-filter: blur(4px);
+/* Modernize 페이드인 애니메이션 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-/* 카드 호버 효과 */
-.card-hover {
-  transition: all 0.3s ease;
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
 }
 
-.card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+/* 반응형 디자인 - 모바일 */
+@media (max-width: 768px) {
+  .sql-converter {
+    padding: 1rem;
+  }
+
+  .dual-sql-editor {
+    height: 400px !important;
+  }
+
+  .monaco-editor {
+    font-size: 12px !important;
+  }
 }
 
-/* 포커스 링 개선 */
-.focus-ring {
+@media (max-width: 640px) {
+  .sql-converter {
+    padding: 0.75rem;
+  }
+
+  .dual-sql-editor {
+    height: 350px !important;
+  }
+
+  .monaco-editor {
+    font-size: 11px !important;
+  }
+}
+
+/* Modernize 툴팁 스타일 */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.5rem 0.75rem;
+  background: #2A3447;
+  color: white;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
   transition: all 0.2s ease;
+  margin-bottom: 5px;
 }
 
-.focus-ring:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  border-color: #3b82f6;
+[data-tooltip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Modernize 그라데이션 배경 */
+.bg-modernize-gradient {
+  background: linear-gradient(135deg, #ECF2FF 0%, #E6F7FF 50%, #E6FDF7 100%);
+}
+
+.dark .bg-modernize-gradient {
+  background: linear-gradient(135deg, #1C2536 0%, #171C28 100%);
+}
+
+/* Monaco Editor 다크모드 호환 */
+.dark .monaco-editor {
+  --vscode-editor-background: #2A3447;
+}
+
+/* Modernize 선택 영역 스타일 */
+.select-wrapper {
+  position: relative;
+}
+
+.select-wrapper::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid currentColor;
+  pointer-events: none;
+}
+
+/* Modernize 체크박스 스타일 */
+input[type="checkbox"] {
+  @apply w-4 h-4 rounded border-light-300 dark:border-dark-200
+         text-primary-500 focus:ring-primary-200
+         dark:bg-dark-100 transition-colors;
+}
+
+/* Modernize 라디오 버튼 스타일 */
+input[type="radio"] {
+  @apply w-4 h-4 border-light-300 dark:border-dark-200
+         text-primary-500 focus:ring-primary-200
+         dark:bg-dark-100 transition-colors;
 }

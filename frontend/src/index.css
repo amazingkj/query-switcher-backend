@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100;300;400;500;600;700;900&family=Noto+Sans:wght@100;300;400;500;600;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,29 +6,136 @@
 
 @layer base {
   html {
-    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans KR', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    @apply bg-gray-50 text-gray-900;
-    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
+    @apply bg-light-100 text-dark dark:bg-dark-500 dark:text-light;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans KR', system-ui, sans-serif;
+    line-height: 1.6;
   }
 
   * {
-    font-family: 'Noto Sans', 'Noto Sans KR', system-ui, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans KR', system-ui, sans-serif;
+  }
+
+  /* Selection colors */
+  ::selection {
+    background-color: rgba(93, 135, 255, 0.2);
+    color: inherit;
   }
 }
 
 @layer components {
+  /* Modernize Primary Button */
   .btn-primary {
-    @apply px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors;
+    @apply px-5 py-2.5 bg-primary-500 text-white font-medium rounded-button
+           shadow-button hover:bg-primary-600 hover:shadow-button-hover
+           focus:ring-2 focus:ring-primary-200 focus:ring-offset-2
+           transition-all duration-normal active:scale-[0.98];
   }
-  
+
+  /* Modernize Secondary Button */
   .btn-secondary {
-    @apply px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors;
+    @apply px-5 py-2.5 bg-secondary-400 text-white font-medium rounded-button
+           hover:bg-secondary-500 focus:ring-2 focus:ring-secondary-200 focus:ring-offset-2
+           transition-all duration-normal active:scale-[0.98];
   }
-  
+
+  /* Modernize Outlined Button */
+  .btn-outlined {
+    @apply px-5 py-2.5 bg-transparent text-primary-500 font-medium rounded-button
+           border border-primary-500 hover:bg-primary-50
+           focus:ring-2 focus:ring-primary-200 focus:ring-offset-2
+           transition-all duration-normal active:scale-[0.98];
+  }
+
+  /* Modernize Soft Button */
+  .btn-soft {
+    @apply px-5 py-2.5 bg-primary-50 text-primary-500 font-medium rounded-button
+           hover:bg-primary-100 focus:ring-2 focus:ring-primary-200 focus:ring-offset-2
+           transition-all duration-normal active:scale-[0.98];
+  }
+
+  /* Modernize Card */
+  .card {
+    @apply bg-white dark:bg-dark rounded-card shadow-card
+           transition-all duration-normal;
+  }
+
+  .card-hover {
+    @apply hover:shadow-card-hover hover:-translate-y-0.5;
+  }
+
+  /* Modernize Input Field */
   .input-field {
-    @apply w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors;
+    @apply w-full px-4 py-3 bg-white dark:bg-dark-100
+           border border-light-300 dark:border-dark-200 rounded-input
+           text-dark dark:text-light placeholder:text-dark/40 dark:placeholder:text-light/40
+           focus:ring-2 focus:ring-primary-200 focus:border-primary-500
+           transition-all duration-fast outline-none;
+  }
+
+  /* Modernize Select */
+  .select-field {
+    @apply w-full px-4 py-3 bg-white dark:bg-dark-100
+           border border-light-300 dark:border-dark-200 rounded-input
+           text-dark dark:text-light
+           focus:ring-2 focus:ring-primary-200 focus:border-primary-500
+           transition-all duration-fast outline-none appearance-none cursor-pointer;
+  }
+
+  /* Modernize Badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
+  }
+
+  .badge-primary {
+    @apply bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400;
+  }
+
+  .badge-success {
+    @apply bg-success-50 text-success-600 dark:bg-success-900/30 dark:text-success-400;
+  }
+
+  .badge-warning {
+    @apply bg-warning-50 text-warning-600 dark:bg-warning-900/30 dark:text-warning-400;
+  }
+
+  .badge-error {
+    @apply bg-error-50 text-error-600 dark:bg-error-900/30 dark:text-error-400;
+  }
+
+  /* Modernize Typography */
+  .heading-1 {
+    @apply text-3xl sm:text-4xl font-bold text-dark dark:text-light leading-tight;
+  }
+
+  .heading-2 {
+    @apply text-2xl sm:text-3xl font-semibold text-dark dark:text-light leading-tight;
+  }
+
+  .heading-3 {
+    @apply text-xl sm:text-2xl font-semibold text-dark dark:text-light leading-tight;
+  }
+
+  .subtitle {
+    @apply text-sm text-dark/60 dark:text-light/60;
+  }
+
+  /* Modernize Icon Button */
+  .icon-btn {
+    @apply p-2 rounded-button text-dark/60 dark:text-light/60
+           hover:bg-light-200 dark:hover:bg-dark-200
+           hover:text-dark dark:hover:text-light
+           transition-all duration-fast;
+  }
+
+  .icon-btn-primary {
+    @apply p-2 rounded-button text-primary-500
+           hover:bg-primary-50 dark:hover:bg-primary-900/30
+           transition-all duration-fast;
   }
 }

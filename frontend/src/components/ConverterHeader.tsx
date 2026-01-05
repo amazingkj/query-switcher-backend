@@ -6,27 +6,26 @@ interface ConverterHeaderProps {
 }
 
 /**
- * SQL 변환기 헤더 컴포넌트
+ * SQL 변환기 헤더 컴포넌트 - Modernize 스타일
  */
 export const ConverterHeader: React.FC<ConverterHeaderProps> = ({ isServerConnected }) => {
   return (
-    <div className="mb-6 text-center sm:text-left">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+    <div className="card p-6 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 dark:text-white mb-2">
-            <span className="bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
-              SQL Query Switcher
-            </span>
+          <h1 className="heading-2 mb-1">
+            <span className="text-primary-500">SQL Query</span>{' '}
+            <span className="text-dark dark:text-light">Switcher</span>
           </h1>
-          <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">
+          <p className="subtitle">
             데이터베이스 간 SQL 쿼리를 쉽게 변환하세요
           </p>
         </div>
-        <div className="mt-4 sm:mt-0 flex items-center justify-center sm:justify-end gap-3">
+        <div className="flex items-center gap-3">
           <ThemeToggle />
           {isServerConnected && (
-            <div className="flex items-center px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 rounded-full text-sm">
-              <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+            <div className="badge badge-success">
+              <span className="w-2 h-2 bg-success-500 rounded-full mr-2 animate-pulse" />
               서버 연결됨
             </div>
           )}

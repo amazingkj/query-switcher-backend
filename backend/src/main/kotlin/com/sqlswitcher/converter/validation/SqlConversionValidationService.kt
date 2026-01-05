@@ -21,8 +21,8 @@ import org.springframework.stereotype.Service
  * 변환된 SQL의 유효성을 검사하고 잠재적인 문제를 경고합니다.
  * JSQLParser를 사용한 파싱 검증 기능 포함
  */
-@Service
-class SqlValidationService {
+@Service("sqlConversionValidationService")
+class SqlConversionValidationService {
 
     // ============ JSQLParser 기반 검증 ============
 

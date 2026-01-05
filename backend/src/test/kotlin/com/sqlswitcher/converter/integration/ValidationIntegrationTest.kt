@@ -2,7 +2,7 @@ package com.sqlswitcher.converter.integration
 
 import com.sqlswitcher.converter.DialectType
 import com.sqlswitcher.converter.ValidationInfo
-import com.sqlswitcher.converter.validation.SqlValidationService
+import com.sqlswitcher.converter.validation.SqlConversionValidationService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.DisplayName
@@ -15,16 +15,16 @@ import kotlin.test.assertEquals
 /**
  * 검증 서비스 통합 테스트
  *
- * SqlValidationService의 JSQLParser 기반 검증 기능과
+ * SqlConversionValidationService의 JSQLParser 기반 검증 기능과
  * 변환 파이프라인 통합을 테스트합니다.
  */
 class ValidationIntegrationTest {
 
-    private lateinit var validationService: SqlValidationService
+    private lateinit var validationService: SqlConversionValidationService
 
     @BeforeEach
     fun setup() {
-        validationService = SqlValidationService()
+        validationService = SqlConversionValidationService()
     }
 
     @Nested

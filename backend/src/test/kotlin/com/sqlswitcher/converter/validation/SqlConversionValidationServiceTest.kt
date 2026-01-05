@@ -12,15 +12,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 /**
- * SqlValidationService 단위 테스트
+ * SqlConversionValidationService 단위 테스트
  */
-class SqlValidationServiceTest {
+class SqlConversionValidationServiceTest {
 
-    private lateinit var validationService: SqlValidationService
+    private lateinit var validationService: SqlConversionValidationService
 
     @BeforeEach
     fun setup() {
-        validationService = SqlValidationService()
+        validationService = SqlConversionValidationService()
     }
 
     @Nested

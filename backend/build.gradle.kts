@@ -71,6 +71,10 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+springBoot {
+    mainClass.set("com.sqlswitcher.SqlSwitcherApplicationKt")
+}
+
 tasks.withType<KotlinCompile> {
     kotlinOptions {
         freeCompilerArgs += "-Xjsr305=strict"

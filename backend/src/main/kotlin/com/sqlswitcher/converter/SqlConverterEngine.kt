@@ -21,7 +21,7 @@ import com.sqlswitcher.converter.recovery.ConversionRecoveryService
 import com.sqlswitcher.converter.streaming.LargeSqlProcessor
 import com.sqlswitcher.converter.stringbased.StringBasedFunctionConverter
 import com.sqlswitcher.converter.stringbased.StringBasedDataTypeConverter
-import com.sqlswitcher.converter.validation.SqlValidationService
+import com.sqlswitcher.converter.validation.SqlConversionValidationService
 import com.sqlswitcher.parser.SqlParserService
 import com.sqlswitcher.service.SqlMetricsService
 import com.sqlswitcher.model.ConversionOptions as ModelConversionOptions
@@ -49,7 +49,7 @@ class SqlConverterEngine(
     private val oracleSyntaxPreprocessor: OracleSyntaxPreprocessor,
     private val stringBasedFunctionConverter: StringBasedFunctionConverter,
     private val stringBasedDataTypeConverter: StringBasedDataTypeConverter,
-    private val sqlValidationService: SqlValidationService
+    private val sqlValidationService: SqlConversionValidationService
 ) {
     private val dialectMap: ConcurrentHashMap<DialectType, DatabaseDialect> = ConcurrentHashMap()
 
